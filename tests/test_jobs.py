@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from localqpu.constants import LOCALQPU_ERROR_CODE
+from localqpu.constants import LOCALQPU_CANCEL_CODE, LOCALQPU_ERROR_CODE
 from localqpu.jobs import JobManager, JobRecord
 from localqpu.programs.base import (
     ExecutionSettings,
@@ -252,3 +252,43 @@ def test_input_error_cause_is_logged_for_developers(caplog: pytest.LogCaptureFix
         job = poll_until_final(manager, manager.submit("sampler", "ibm_brisbane", {}).job_id)
     assert job.reason == "pubs 목록이 필요합니다"
     assert job.job_id in caplog.text and "KeyError" in caplog.text
+
+
+def test_reset_frees_workers_stuck_on_long_jobs() -> None:
+    """reset 뒤에는 이전 테스트의 긴 작업이 워커를 차지하고 있어도 새 작업이 바로 실행된다."""
+    gate = threading.Event()
+    blocking_runner = make_runner(gate=gate)
+    fast_runner = make_runner()
+    manager = JobManager(
+        ScenarioState(),
+        24,
+        runner_lookup=lambda program_id: blocking_runner if program_id == "slow" else fast_runner,
+        max_workers=2,
+    )
+    try:
+        for _ in range(2):
+            slow_job = manager.submit("slow", "ibm_brisbane", {})
+            manager.poll(slow_job.job_id)
+            assert manager.poll(slow_job.job_id).status == "Running"
+        manager.reset()
+        job = manager.submit("sampler", "ibm_brisbane", {})
+        assert poll_until_final(manager, job.job_id, timeout=2.0).status == "Completed"
+    finally:
+        gate.set()
+
+
+def test_user_cancel_sets_reason_code() -> None:
+    """사용자 취소에도 localqpu 취소 코드가 붙는다(설계서: 실패·취소 시 reason_code를 채운다)."""
+    manager = make_manager(parse_scenario({"queue": {"polls_before_running": 100}}))
+    job = manager.submit("sampler", "ibm_brisbane", {})
+    manager.cancel(job.job_id)
+    cancelled = manager.get(job.job_id)
+    assert cancelled.reason_code == LOCALQPU_CANCEL_CODE and cancelled.reason_code != 1305
+
+
+def test_params_are_released_after_leaving_queue() -> None:
+    """대기열을 벗어난 작업은 입력 params(QPY 회로 등)를 더 들고 있지 않는다."""
+    manager = make_manager()
+    job = manager.submit("sampler", "ibm_brisbane", {"pubs": ["big"]})
+    finished = poll_until_final(manager, job.job_id)
+    assert finished.params == {}

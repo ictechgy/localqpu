@@ -29,6 +29,9 @@ DEFAULT_MAX_SIM_QUBITS: int = 24
 #: localqpu 자체 사유(입력 해석 실패, 한도 초과 등)로 작업이 실패했을 때 쓰는 사유 코드.
 LOCALQPU_ERROR_CODE: int = 9000
 
+#: 사용자가 localqpu에서 작업을 취소했을 때 쓰는 사유 코드. 클라이언트가 시간 초과로 해석하는 1305와 겹치지 않게 한다.
+LOCALQPU_CANCEL_CODE: int = 9001
+
 #: 기존 SamplerV2에서 shots가 지정되지 않았을 때 쓰는 기본값. IBM SamplerV2 기본값과 같다.
 DEFAULT_SAMPLER_SHOTS: int = 4096
 

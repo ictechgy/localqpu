@@ -18,7 +18,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from localqpu.constants import LOCALQPU_ERROR_CODE
+from localqpu.constants import LOCALQPU_CANCEL_CODE, LOCALQPU_ERROR_CODE
 from localqpu.programs import find_program_runner
 from localqpu.programs.base import (
     ExecutionSettings,
@@ -99,7 +99,8 @@ class JobManager:
         self._max_sim_qubits = max_sim_qubits
         self._runner_lookup = runner_lookup
         self._clock = clock
-        self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="localqpu-job")
+        self._max_workers = max_workers
+        self._pool = self._new_pool()
         self._lock = threading.Lock()
         self._jobs: dict[str, JobRecord] = {}
 
@@ -164,7 +165,12 @@ class JobManager:
                 return "already_final"
             if job.future is not None:
                 job.future.cancel()
-            job.status, job.reason = "Cancelled", _USER_CANCEL_REASON
+            job.status, job.reason, job.reason_code = (
+                "Cancelled",
+                _USER_CANCEL_REASON,
+                LOCALQPU_CANCEL_CODE,
+            )
+            job.params = {}
             return "cancelled"
 
     def reset(self) -> None:
@@ -172,6 +178,10 @@ class JobManager:
 
         제출과 같은 잠금 안에서 해야, 제출 도중의 reset이 이미 소비된 next_jobs를
         되살리면서 그 작업도 남기는 경쟁이 생기지 않는다. 실행 중인 작업은 결과를 버린다.
+
+        이미 실행 중인 시뮬레이션은 중간에 멈출 수 없으므로, 스레드 풀을 새로 만들어
+        이전 작업이 워커를 차지한 채로 다음 테스트의 작업을 굶기지 않게 한다.
+        이전 스레드는 계산을 마칠 때까지 CPU를 쓰지만 결과는 버려진다.
         """
         with self._lock:
             for job in self._jobs.values():
@@ -179,6 +189,12 @@ class JobManager:
                     job.future.cancel()
             self._jobs.clear()
             self._scenario_state.reset()
+            self._pool.shutdown(wait=False, cancel_futures=True)
+            self._pool = self._new_pool()
+
+    def _new_pool(self) -> ThreadPoolExecutor:
+        """작업 실행용 스레드 풀."""
+        return ThreadPoolExecutor(max_workers=self._max_workers, thread_name_prefix="localqpu-job")
 
     def shutdown(self) -> None:
         """스레드 풀을 정리한다. 서버 종료 시 부른다."""
@@ -203,7 +219,12 @@ class JobManager:
         return is_online and has_waited and job.polls > scenario.queue.polls_before_running
 
     def _leave_queue(self, job: JobRecord) -> None:
-        """예정된 결말을 적용하거나 실행을 시작한다."""
+        """예정된 결말을 적용하거나 실행을 시작한다. 입력 params는 여기서 넘기고 기록에서 비운다.
+
+        params에는 QPY 회로가 들어 있어 크기가 크므로, 오래 도는 서버가 끝난 작업의 입력을
+        계속 들고 있지 않게 한다.
+        """
+        params, job.params = job.params, {}
         if job.planned.outcome == "failed":
             reason = job.planned.reason or _DEFAULT_PLANNED_FAILURE_REASON
             job.status, job.reason, job.reason_code = "Failed", reason, job.planned.reason_code
@@ -214,9 +235,7 @@ class JobManager:
             job.status, job.reason, job.reason_code = "Cancelled", reason, job.planned.reason_code
             return
         job.status = "Running"
-        job.future = self._pool.submit(
-            self._runner_lookup(job.program_id), job.params, job.settings
-        )
+        job.future = self._pool.submit(self._runner_lookup(job.program_id), params, job.settings)
 
     def _finish(self, job: JobRecord) -> None:
         """끝난 실행의 결과나 오류를 작업에 반영한다."""
