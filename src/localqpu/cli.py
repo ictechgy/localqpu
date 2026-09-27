@@ -35,14 +35,17 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"바인딩 주소(기본 {DEFAULT_HOST}). 외부 노출은 명시할 때만",
     )
     start.add_argument(
-        "--port", type=int, default=DEFAULT_PORT, help=f"포트(기본 {DEFAULT_PORT}, 0이면 빈 포트)"
+        "--port",
+        type=_port_number,
+        default=DEFAULT_PORT,
+        help=f"포트(기본 {DEFAULT_PORT}, 0이면 빈 포트)",
     )
     start.add_argument(
         "--backends", default=",".join(DEFAULT_BACKENDS), help="노출할 칩, 쉼표 구분"
     )
     start.add_argument(
         "--max-sim-qubits",
-        type=int,
+        type=_non_negative_int,
         default=DEFAULT_MAX_SIM_QUBITS,
         help="정확 시뮬레이션 최대 활성 큐비트",
     )
@@ -50,6 +53,30 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--verbose", action="store_true", help="요청 본문 일부도 로그로 남긴다")
     commands.add_parser("backends", help="사용 가능한 칩 스냅샷 이름을 출력한다")
     return parser
+
+
+def _port_number(raw: str) -> int:
+    """0~65535 범위의 포트 번호. 범위를 벗어나면 bind 단계의 OverflowError traceback 대신 인자 오류로 알린다."""
+    value = _integer(raw)
+    if not 0 <= value <= 65535:
+        raise argparse.ArgumentTypeError(f"포트는 0~65535 범위여야 합니다(0이면 빈 포트): {value}")
+    return value
+
+
+def _non_negative_int(raw: str) -> int:
+    """0 이상의 정수."""
+    value = _integer(raw)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"0 이상 범위의 정수여야 합니다: {value}")
+    return value
+
+
+def _integer(raw: str) -> int:
+    """정수 문자열을 읽는다."""
+    try:
+        return int(raw)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"정수 범위의 값이어야 합니다: {raw!r}") from error
 
 
 def config_from_args(args: argparse.Namespace) -> ServerConfig:

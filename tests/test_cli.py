@@ -72,3 +72,17 @@ def test_port_in_use_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
         port = occupied.getsockname()[1]
         assert main(["start", "--port", str(port)]) == 2
     assert "--port" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [["--port", "70000"], ["--port", "-1"], ["--max-sim-qubits", "-3"]],
+)
+def test_out_of_range_options_exit_2_without_traceback(
+    arguments: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """범위를 벗어난 옵션은 traceback 없이 argparse 오류(종료 코드 2)로 끝난다."""
+    with pytest.raises(SystemExit) as caught:
+        main(["start", *arguments])
+    error_output = capsys.readouterr().err
+    assert caught.value.code == 2 and "Traceback" not in error_output and "범위" in error_output
