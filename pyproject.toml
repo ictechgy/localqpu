@@ -11,6 +11,9 @@ dependencies = [
     "PyJWT>=2.8",
 ]
 
+[project.entry-points.pytest11]
+localqpu = "localqpu.pytest_plugin"
+
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.14", "mypy>=1.13"]
 
@@ -48,4 +51,8 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["contract: 실제 qiskit-ibm-runtime 클라이언트를 localqpu에 붙여 도는 계약 테스트"]
-filterwarnings = ["ignore::DeprecationWarning:qiskit_ibm_runtime.*"]
+filterwarnings = [
+    "ignore::DeprecationWarning:qiskit_ibm_runtime.*",
+    # 계약 테스트는 폐기 예정인 기존 SamplerV2 호환을 일부러 검증한다.
+    "ignore:The SamplerV2 class is deprecated:DeprecationWarning",
+]
