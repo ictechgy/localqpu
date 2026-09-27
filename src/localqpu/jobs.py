@@ -224,6 +224,8 @@ class JobManager:
         try:
             output = job.future.result()
         except ProgramInputError as error:
+            # 사용자에게는 사유만 보이고, 원인 예외(스택)는 개발자 로그로 남긴다.
+            logger.info("작업 %s 입력 오류: %s", job.job_id, error, exc_info=error)
             self._fail(job, str(error))
         except Exception as error:
             logger.exception("작업 %s 실행 중 예상하지 못한 오류", job.job_id)

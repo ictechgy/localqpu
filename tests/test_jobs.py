@@ -234,3 +234,21 @@ def test_reset_clears_jobs_and_restores_scenario() -> None:
     manager.reset()
     assert manager.list_jobs() == []
     assert manager.submit("sampler", "ibm_brisbane", {}).planned.outcome == "failed"
+
+
+def test_input_error_cause_is_logged_for_developers(caplog: pytest.LogCaptureFixture) -> None:
+    """입력 오류도 원인 예외와 함께 개발자 로그에 남는다(사용자 사유와 분리)."""
+
+    def failing_runner(params: dict[str, Any], settings: ExecutionSettings) -> ProgramOutput:
+        """KeyError를 원인으로 하는 입력 오류를 낸다."""
+        try:
+            {}["pubs"]
+        except KeyError as error:
+            raise ProgramInputError("pubs 목록이 필요합니다") from error
+        raise AssertionError("도달하지 않는다")
+
+    manager = make_manager(runner=failing_runner)
+    with caplog.at_level(logging.INFO, logger="localqpu.jobs"):
+        job = poll_until_final(manager, manager.submit("sampler", "ibm_brisbane", {}).job_id)
+    assert job.reason == "pubs 목록이 필요합니다"
+    assert job.job_id in caplog.text and "KeyError" in caplog.text
