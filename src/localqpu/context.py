@@ -9,6 +9,7 @@ from localqpu.ibm.backends import BackendCatalog
 from localqpu.jobs import JobManager
 from localqpu.scenario import Scenario, ScenarioState
 from localqpu.server import ServerStats
+from localqpu.sessions import SessionManager
 
 
 @dataclass(frozen=True)
@@ -32,3 +33,4 @@ class AppContext:
     scenario_state: ScenarioState
     jobs: JobManager
     stats: ServerStats
+    sessions: SessionManager

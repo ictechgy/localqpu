@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import dataclasses
-import datetime
 import logging
 import threading
 import time
@@ -18,6 +17,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from localqpu.clock import utc_now_iso
 from localqpu.constants import LOCALQPU_CANCEL_CODE, LOCALQPU_ERROR_CODE
 from localqpu.programs import find_program_runner
 from localqpu.programs.base import (
@@ -75,6 +75,7 @@ class JobRecord:
     result_payload: str | None = field(default=None, repr=False)
     is_stub: bool = False
     entangled_qubits: int | None = None
+    session_id: str | None = None
     future: Future[ProgramOutput] | None = field(default=None, repr=False, compare=False)
 
     @property
@@ -104,7 +105,13 @@ class JobManager:
         self._lock = threading.Lock()
         self._jobs: dict[str, JobRecord] = {}
 
-    def submit(self, program_id: str, backend_name: str, params: dict[str, Any]) -> JobRecord:
+    def submit(
+        self,
+        program_id: str,
+        backend_name: str,
+        params: dict[str, Any],
+        session_id: str | None = None,
+    ) -> JobRecord:
         """작업을 등록한다. 결말과 시드는 제출 순서대로 정해져 재현 가능하다.
 
         Raises:
@@ -123,7 +130,8 @@ class JobManager:
                     self._max_sim_qubits, self._scenario_state.derive_seed()
                 ),
                 submitted_at=self._clock(),
-                created=_utc_now_iso(),
+                created=utc_now_iso(),
+                session_id=session_id,
             )
             self._jobs[job.job_id] = job
             return dataclasses.replace(job)
@@ -163,15 +171,30 @@ class JobManager:
             self._settle(job)
             if job.is_final:
                 return "already_final"
-            if job.future is not None:
-                job.future.cancel()
-            job.status, job.reason, job.reason_code = (
-                "Cancelled",
-                _USER_CANCEL_REASON,
-                LOCALQPU_CANCEL_CODE,
-            )
-            job.params = {}
+            self._cancel_locked(job)
             return "cancelled"
+
+    def cancel_session_jobs(self, session_id: str) -> int:
+        """세션의 끝나지 않은 작업을 모두 취소하고 취소한 개수를 돌려준다(세션 취소용)."""
+        with self._lock:
+            targets = [job for job in self._jobs.values() if job.session_id == session_id]
+            for job in targets:
+                self._settle(job)
+            pending = [job for job in targets if not job.is_final]
+            for job in pending:
+                self._cancel_locked(job)
+            return len(pending)
+
+    def _cancel_locked(self, job: JobRecord) -> None:
+        """잠금을 잡은 상태에서 끝나지 않은 작업을 사용자 취소로 바꾼다."""
+        if job.future is not None:
+            job.future.cancel()
+        job.status, job.reason, job.reason_code = (
+            "Cancelled",
+            _USER_CANCEL_REASON,
+            LOCALQPU_CANCEL_CODE,
+        )
+        job.params = {}
 
     def reset(self) -> None:
         """작업 기록을 지우고 시나리오를 처음 상태로 되돌린다.
@@ -265,8 +288,3 @@ class JobManager:
     def _fail(self, job: JobRecord, reason: str) -> None:
         """localqpu 사유 코드로 작업을 실패시킨다."""
         job.status, job.reason, job.reason_code = "Failed", reason, LOCALQPU_ERROR_CODE
-
-
-def _utc_now_iso() -> str:
-    """IBM 응답과 같은 UTC ISO-8601 문자열(끝에 Z)."""
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")

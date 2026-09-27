@@ -26,6 +26,7 @@ from localqpu.server import (
     Router,
     error_response,
 )
+from localqpu.sessions import SessionNotFoundError, SessionRejectedError
 
 #: 가짜 토큰 서명 키. 비밀이 아니다(클라이언트는 서명을 검증하지 않고 exp만 읽는다).
 #: 32바이트 이상이어야 PyJWT의 짧은 키 경고가 나지 않는다.
@@ -156,14 +157,21 @@ def get_usage(context: AppContext, request: Request, params: dict[str, str]) -> 
 
 
 def submit_job(context: AppContext, request: Request, params: dict[str, str]) -> Response:
-    """작업 제출. 사용량·백엔드·프로그램을 확인한 뒤 작업 관리자에 등록한다."""
+    """작업 제출. 사용량·백엔드·세션·프로그램을 확인한 뒤 작업 관리자에 등록한다."""
     payload = _require_object(request.json_body())
-    rejection = _reject_malformed_submission(payload) or _reject_submission(context, payload)
+    rejection = (
+        _reject_malformed_submission(payload)
+        or _reject_submission(context, payload)
+        or _reject_session(context, payload)
+    )
     if rejection is not None:
         return rejection
     try:
         job = context.jobs.submit(
-            payload["program_id"], payload["backend"], payload.get("params") or {}
+            payload["program_id"],
+            payload["backend"],
+            payload.get("params") or {},
+            session_id=payload.get("session_id"),
         )
     except UnsupportedProgramError as error:
         return error_response(404, str(error))
@@ -178,6 +186,8 @@ def _reject_malformed_submission(payload: dict[str, Any]) -> Response | None:
                 400,
                 f"제출 본문의 '{field_name}'은(는) 문자열이어야 합니다(받은 값: {payload.get(field_name)!r}).",
             )
+    if payload.get("session_id") is not None and not isinstance(payload["session_id"], str):
+        return error_response(400, "제출 본문의 'session_id'는 문자열이어야 합니다.")
     if not isinstance(payload.get("params", {}), dict):
         return error_response(400, "제출 본문의 'params'는 JSON 객체여야 합니다.")
     return None
@@ -196,6 +206,23 @@ def _reject_submission(context: AppContext, payload: dict[str, Any]) -> Response
             400,
             f"localqpu에 '{backend_name}' 백엔드가 없습니다. 사용 가능: {', '.join(context.catalog.names)}",
         )
+    return None
+
+
+def _reject_session(context: AppContext, payload: dict[str, Any]) -> Response | None:
+    """세션 작업이면 세션이 받을 수 있는지 확인한다. 모르는 세션은 400, 닫힌 세션은 409.
+
+    404를 쓰지 않는 이유: 클라이언트는 제출 404를 "Program not found"로 바꿔 보여 준다.
+    """
+    session_id = payload.get("session_id")
+    if session_id is None:
+        return None
+    try:
+        context.sessions.accept_job(session_id, payload["backend"])
+    except SessionNotFoundError as error:
+        return error_response(400, str(error))
+    except SessionRejectedError as error:
+        return error_response(409, str(error))
     return None
 
 
@@ -249,6 +276,7 @@ def job_to_api(job: JobRecord) -> dict[str, Any]:
         "program": {"id": job.program_id},
         "created": job.created,
         "usage": {"quantum_seconds": 0},
+        "session_id": job.session_id,
     }
 
 

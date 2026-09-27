@@ -217,3 +217,99 @@ def test_failed_job_results_are_plain_text() -> None:
         assert connection.getresponse().getheader("Content-Type").startswith("text/plain")
     finally:
         running.stop()
+
+
+def create_session(server: RunningServer, mode: str = "dedicated") -> str:
+    """세션을 만들고 ID를 돌려준다."""
+    status, body = send_direct(
+        "POST",
+        f"{server.url}/api/v1/sessions",
+        {"mode": mode, "backend": "ibm_brisbane", "max_ttl": 600},
+    )
+    assert status == 200
+    return str(body["id"])
+
+
+def test_session_lifecycle(server: RunningServer) -> None:
+    """세션은 open으로 만들어지고, 작업이 들어오면 active, 닫으면 closed가 된다."""
+    session_id = create_session(server, "batch")
+    _, details = send_direct("GET", f"{server.url}/api/v1/sessions/{session_id}")
+    assert (
+        details["state"],
+        details["accepting_jobs"],
+        details["mode"],
+        details["backend_name"],
+        details["max_ttl"],
+    ) == ("open", True, "batch", "ibm_brisbane", 600)
+    status, submitted = send_direct(
+        "POST", f"{server.url}/api/v1/jobs", {**sampler_payload(), "session_id": session_id}
+    )
+    assert status == 200
+    _, job = send_direct("GET", f"{server.url}/api/v1/jobs/{submitted['id']}")
+    assert job["session_id"] == session_id
+    assert send_direct("GET", f"{server.url}/api/v1/sessions/{session_id}")[1]["state"] == "active"
+    assert (
+        send_direct(
+            "PATCH", f"{server.url}/api/v1/sessions/{session_id}", {"accepting_jobs": False}
+        )[0]
+        == 204
+    )
+    _, closed = send_direct("GET", f"{server.url}/api/v1/sessions/{session_id}")
+    assert (closed["state"], closed["accepting_jobs"]) == ("closed", False) and closed["closed_at"]
+
+
+def test_closed_session_rejects_submission_with_409(server: RunningServer) -> None:
+    """닫힌 세션으로 제출하면 409다(클라이언트는 닫힌 세션에도 그대로 제출한다)."""
+    session_id = create_session(server)
+    send_direct("PATCH", f"{server.url}/api/v1/sessions/{session_id}", {"accepting_jobs": False})
+    status, body = send_direct(
+        "POST", f"{server.url}/api/v1/jobs", {**sampler_payload(), "session_id": session_id}
+    )
+    assert status == 409 and "닫힌" in body["errors"][0]["message"]
+
+
+def test_unknown_session_submission_is_400(server: RunningServer) -> None:
+    """모르는 세션으로 제출하면 400이다(404는 클라이언트가 Program not found로 바꾼다)."""
+    status, body = send_direct(
+        "POST", f"{server.url}/api/v1/jobs", {**sampler_payload(), "session_id": "nope"}
+    )
+    assert status == 400 and "nope" in body["errors"][0]["message"]
+
+
+def test_session_cancel_cancels_pending_jobs() -> None:
+    """세션 취소(DELETE .../close)는 대기 중인 작업을 취소하고 세션을 닫는다."""
+    running = launch({"queue": {"polls_before_running": 1000}})
+    try:
+        session_id = create_session(running)
+        _, submitted = send_direct(
+            "POST", f"{running.url}/api/v1/jobs", {**sampler_payload(), "session_id": session_id}
+        )
+        assert send_direct("DELETE", f"{running.url}/api/v1/sessions/{session_id}/close")[0] == 204
+        _, job = send_direct("GET", f"{running.url}/api/v1/jobs/{submitted['id']}")
+        assert job["state"]["status"] == "Cancelled"
+        assert (
+            send_direct("GET", f"{running.url}/api/v1/sessions/{session_id}")[1]["state"]
+            == "closed"
+        )
+    finally:
+        running.stop()
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_status"),
+    [
+        ({"mode": "turbo", "backend": "ibm_brisbane"}, 400),
+        ({"mode": "dedicated", "backend": "ibm_atlantis"}, 400),
+    ],
+)
+def test_invalid_session_creation_is_400(
+    server: RunningServer, body: dict[str, Any], expected_status: int
+) -> None:
+    """모르는 모드나 백엔드로는 세션을 만들 수 없다."""
+    assert send_direct("POST", f"{server.url}/api/v1/sessions", body)[0] == expected_status
+
+
+def test_unknown_session_details_is_404(server: RunningServer) -> None:
+    """모르는 세션 조회는 재시작 안내와 함께 404다."""
+    status, body = send_direct("GET", f"{server.url}/api/v1/sessions/nope")
+    assert status == 404 and "재시작" in body["errors"][0]["message"]
