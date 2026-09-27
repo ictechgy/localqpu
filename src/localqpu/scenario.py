@@ -165,6 +165,22 @@ def parse_scenario(raw: object) -> Scenario:
     )
 
 
+def ensure_known_backends(scenario: Scenario, known_names: list[str]) -> None:
+    """시나리오가 서버에 없는 백엔드를 가리키면 거절한다.
+
+    이름 오타(예: ibm_brisbne)를 받아들이면 오프라인 설정이 아무 효과 없이 무시되어
+    원인을 찾기 어려우므로, 모르는 키를 거절하는 파서 원칙과 같이 다룬다.
+
+    Raises:
+        ScenarioError: 모르는 백엔드 이름이 있을 때. 메시지에 사용 가능한 이름을 담는다.
+    """
+    unknown = sorted(set(scenario.backends) - set(known_names))
+    if unknown:
+        raise ScenarioError(
+            f"backends에 서버에 없는 백엔드가 있습니다: {', '.join(unknown)} (사용 가능: {', '.join(known_names)})"
+        )
+
+
 def scenario_to_json(scenario: Scenario) -> dict[str, Any]:
     """시나리오를 parse_scenario가 다시 읽을 수 있는 JSON 객체로 바꾼다."""
     raw = dataclasses.asdict(scenario)

@@ -9,6 +9,7 @@ from localqpu.app import start_server
 from localqpu.context import ServerConfig
 from localqpu.control_client import LocalqpuControl, LocalqpuControlError
 from localqpu.http_util import send_direct
+from localqpu.scenario import ScenarioError, parse_scenario
 from localqpu.server import RunningServer
 
 
@@ -64,3 +65,18 @@ def test_reset_clears_jobs_scenario_and_stats(server: RunningServer) -> None:
     control.reset()
     assert control.jobs() == [] and control.scenario()["seed"] is None
     assert control.health()["blocked_connect_requests"] == 0
+
+
+def test_put_scenario_rejects_unknown_backend_name(server: RunningServer) -> None:
+    """시나리오의 백엔드 이름 오타는 조용히 무시되지 않고 사용 가능한 이름과 함께 거절된다."""
+    control = LocalqpuControl(server.url)
+    with pytest.raises(LocalqpuControlError, match="ibm_brisbne.*ibm_brisbane"):
+        control.set_scenario({"backends": {"ibm_brisbne": {"status": "offline"}}})
+    assert control.scenario()["backends"] == {}
+
+
+def test_start_rejects_unknown_backend_in_scenario() -> None:
+    """시작 시나리오에 없는 백엔드가 있으면 서버를 띄우지 않는다."""
+    scenario = parse_scenario({"backends": {"ibm_brisbne": {"status": "offline"}}})
+    with pytest.raises(ScenarioError, match="ibm_brisbne"):
+        start_server(ServerConfig(port=0, scenario=scenario))

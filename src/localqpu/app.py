@@ -7,7 +7,7 @@ from localqpu.control import register_control_routes
 from localqpu.ibm.backends import BackendCatalog
 from localqpu.ibm.routes import register_ibm_routes
 from localqpu.jobs import JobManager
-from localqpu.scenario import ScenarioState
+from localqpu.scenario import ScenarioState, ensure_known_backends
 from localqpu.server import Router, RunningServer, ServerStats, serve
 
 
@@ -16,11 +16,14 @@ def build_context(config: ServerConfig) -> AppContext:
 
     Raises:
         BackendCatalogError: 없는 칩을 지정했을 때.
+        ScenarioError: 시나리오가 카탈로그에 없는 백엔드를 가리킬 때.
     """
+    catalog = BackendCatalog(config.backends)
+    ensure_known_backends(config.scenario, catalog.names)
     scenario_state = ScenarioState(config.scenario)
     return AppContext(
         config=config,
-        catalog=BackendCatalog(config.backends),
+        catalog=catalog,
         scenario_state=scenario_state,
         jobs=JobManager(scenario_state, config.max_sim_qubits),
         stats=ServerStats(),
