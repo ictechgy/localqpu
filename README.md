@@ -74,7 +74,8 @@ Use `localqpu start --scenario scenario.json` or `localqpu_control.set_scenario(
   ],
   "backends": { "ibm_brisbane": { "status": "offline", "queue_length": 120 } },
   "usage": { "limit_seconds": 600, "consumed_seconds": 600 },
-  "auth": { "reject_tokens": false }
+  "auth": { "reject_tokens": false },
+  "noise": false
 }
 ```
 
@@ -88,6 +89,7 @@ Use `localqpu start --scenario scenario.json` or `localqpu_control.set_scenario(
 | Backend `paused` | A "currently has a status of paused" warning, then normal processing |
 | Usage limit reached | A warning, then submission fails with `IBMRuntimeError` (403) |
 | `auth.reject_tokens` | `InvalidAccountError` when creating the service |
+| `noise: true` | Results include the chip's gate and readout errors (noise model built from the same calibration snapshot, e.g. ~6% `01`/`10` on a Bell pair on `ibm_brisbane`) |
 
 > `QiskitRuntimeService` caches the backend list after the first `least_busy()`/`backends()` call, exactly as it does against IBM. After changing backend status in a scenario, create a new service (the `localqpu_service` fixture gives you a fresh one per test).
 
@@ -119,7 +121,7 @@ Circuits arrive laid out on the full chip (e.g. 127 qubits), but what makes simu
 
 - IBM Quantum Platform only. Qiskit Functions are not supported yet.
 - `Session` and `Batch` are supported (create, status, `close()`, `cancel()`, `from_id`), but session timeouts (`max_time`, interactive timeout) are not emulated.
-- Noiseless simulation.
+- Noiseless by default; set `"noise": true` in the scenario to add the chip's noise model.
 - Jobs are kept in memory only and are lost when the server restarts.
 - A running simulation cannot be interrupted. `POST /_localqpu/reset` (used by the pytest fixtures between tests) discards its result and starts a fresh worker pool, so later jobs are not blocked, but the old computation keeps using CPU until it finishes.
 - Failure reasons use localqpu codes: `9000` for localqpu-side failures (invalid input, simulation limits) and `9001` for user cancellation.

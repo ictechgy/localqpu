@@ -144,3 +144,19 @@ def test_estimator_rejects_missing_pubs_with_structure_hint() -> None:
 def test_registry_includes_estimator() -> None:
     """estimator가 레지스트리에 등록돼 있다."""
     assert find_program_runner("estimator") is run_estimator_program
+
+
+def test_estimator_with_noise_lowers_correlation() -> None:
+    """노이즈를 켜면 칩에 배치한 Bell 상태의 ZZ가 1보다 작아진다."""
+    from qiskit.transpiler import generate_preset_pass_manager
+
+    from localqpu.noise import fake_backend_for
+
+    backend = fake_backend_for("ibm_brisbane")
+    isa = generate_preset_pass_manager(backend=backend, optimization_level=1).run(bell_state())
+    params = encode_like_client(
+        {"pubs": [(isa, SparsePauliOp("ZZ").apply_layout(isa.layout))], "options": {}}
+    )
+    settings = ExecutionSettings(max_sim_qubits=24, seed=7, noise_backend="ibm_brisbane")
+    result = json.loads(run_estimator_program(params, settings).payload, cls=RuntimeDecoder)
+    assert 0.5 < float(result[0].data.evs) < 0.999

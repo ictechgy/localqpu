@@ -12,6 +12,7 @@ from qiskit.primitives.containers.estimator_pub import EstimatorPub
 from qiskit_aer.primitives import EstimatorV2 as AerEstimator
 
 from localqpu._compat import RuntimeEncoder
+from localqpu.noise import aer_backend_options
 from localqpu.programs.base import ExecutionSettings, ProgramOutput
 from localqpu.programs.decoding import (
     STRUCTURE_ERRORS,
@@ -20,7 +21,7 @@ from localqpu.programs.decoding import (
     default_option,
     structure_error,
 )
-from localqpu.simulation import EXACT_AER_BACKEND_OPTIONS, count_entangled_qubits
+from localqpu.simulation import count_entangled_qubits
 
 
 def run_estimator_program(params: dict[str, Any], settings: ExecutionSettings) -> ProgramOutput:
@@ -35,7 +36,7 @@ def run_estimator_program(params: dict[str, Any], settings: ExecutionSettings) -
     result = (
         _stub_result(pubs, np.random.default_rng(settings.seed))
         if is_stub
-        else _estimate(pubs, settings.seed)
+        else _estimate(pubs, settings.seed, settings.noise_backend)
     )
     payload = json.dumps(result, cls=RuntimeEncoder)
     return ProgramOutput(payload=payload, is_stub=is_stub, entangled_qubits=entangled_qubits)
@@ -51,9 +52,11 @@ def _decode_pubs(params: dict[str, Any]) -> list[EstimatorPub]:
         raise structure_error("estimator", error, "회로, 관측량, 파라미터 값, 정밀도") from error
 
 
-def _estimate(pubs: Sequence[EstimatorPub], seed: int | None) -> PrimitiveResult:
+def _estimate(
+    pubs: Sequence[EstimatorPub], seed: int | None, noise_backend: str | None
+) -> PrimitiveResult:
     """Aer MPS로 기대값을 계산한다. 칩 폭 회로와 관측량을 그대로 넘긴다."""
-    options: dict[str, Any] = {"backend_options": EXACT_AER_BACKEND_OPTIONS}
+    options: dict[str, Any] = {"backend_options": aer_backend_options(noise_backend)}
     if seed is not None:
         options["run_options"] = {"seed": seed}
     return AerEstimator(options=options).run(pubs).result()

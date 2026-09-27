@@ -303,3 +303,10 @@ def test_cancel_session_jobs_cancels_only_that_session() -> None:
     assert manager.get(in_session.job_id).status == "Cancelled"
     assert manager.get(other.job_id).status == "Queued"
     assert manager.get(in_session.job_id).session_id == "s-1"
+
+
+def test_noise_scenario_sets_noise_backend_at_submission() -> None:
+    """노이즈 시나리오에서 제출한 작업은 자기 백엔드의 노이즈로 실행되도록 설정된다."""
+    manager = make_manager(parse_scenario({"noise": True}))
+    assert manager.submit("sampler", "ibm_brisbane", {}).settings.noise_backend == "ibm_brisbane"
+    assert make_manager().submit("sampler", "ibm_brisbane", {}).settings.noise_backend is None

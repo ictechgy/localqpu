@@ -168,3 +168,12 @@ def test_nested_error_names_backend() -> None:
     """backends 항목 오류 메시지에 어느 백엔드인지가 들어간다."""
     with pytest.raises(ScenarioError, match=r"backends\.ibm_b"):
         parse_scenario({"backends": {"ibm_a": {}, "ibm_b": {"status": "down"}}})
+
+
+def test_noise_flag_parses_and_round_trips() -> None:
+    """noise는 불리언이고, 기본값은 false이며, JSON 왕복에서 유지된다."""
+    assert Scenario().noise is False
+    scenario = parse_scenario({"noise": True})
+    assert scenario.noise is True and parse_scenario(scenario_to_json(scenario)) == scenario
+    with pytest.raises(ScenarioError, match="noise"):
+        parse_scenario({"noise": "yes"})

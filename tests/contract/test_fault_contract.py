@@ -151,3 +151,23 @@ def test_executor_over_limit_fails_with_guidance(tiny_limit_server: RunningServe
     backend = service.backend("ibm_brisbane")
     with pytest.raises(RuntimeJobFailureError, match="max-sim-qubits"):
         ExecutorSampler(mode=backend).run([bell_isa_circuit(backend)]).result(timeout=60)
+
+
+def test_noise_scenario_adds_errors_for_both_samplers(
+    localqpu_service: QiskitRuntimeService, localqpu_control: LocalqpuControl
+) -> None:
+    """노이즈 시나리오에서는 두 Sampler 모두 Bell 회로에 01·10 오류가 섞인다."""
+    localqpu_control.set_scenario({"noise": True, "seed": 11})
+    backend = localqpu_service.backend("ibm_brisbane")
+    circuit = bell_isa_circuit(backend)
+    legacy = (
+        SamplerV2(mode=backend)
+        .run([circuit], shots=4000)
+        .result(timeout=120)[0]
+        .data.meas.get_counts()
+    )
+    sampler = ExecutorSampler(mode=backend)
+    sampler.options.default_shots = 4000
+    modern = sampler.run([circuit]).result(timeout=120)[0].data.meas.get_counts()
+    for counts in (legacy, modern):
+        assert counts.get("01", 0) + counts.get("10", 0) > 0

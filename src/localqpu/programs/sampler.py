@@ -24,7 +24,7 @@ def run_sampler_program(params: dict[str, Any], settings: ExecutionSettings) -> 
     """SamplerV2 입력을 해석해 시뮬레이션하고, 클라이언트 디코더가 읽는 JSON으로 돌려준다."""
     pubs = _decode_pubs(params)
     try:
-        outcome = sample_pubs(pubs, settings.max_sim_qubits, settings.seed)
+        outcome = sample_pubs(pubs, settings.max_sim_qubits, settings.seed, settings.noise_backend)
     except CircuitShapeError as error:
         raise ProgramInputError(str(error)) from error
     payload = json.dumps(outcome.result, cls=RuntimeEncoder)
