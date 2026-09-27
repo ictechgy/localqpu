@@ -5,10 +5,12 @@ from typing import Any
 
 import pytest
 from qiskit import QuantumCircuit
+from qiskit.quantum_info import SparsePauliOp
 
 from localqpu._compat import RuntimeDecoder, RuntimeEncoder
 from localqpu.programs import SUPPORTED_PROGRAM_IDS, find_program_runner
 from localqpu.programs.base import ExecutionSettings, ProgramInputError, UnsupportedProgramError
+from localqpu.programs.estimator import run_estimator_program
 from localqpu.programs.executor import run_executor_program
 from localqpu.programs.sampler import run_sampler_program
 
@@ -38,7 +40,7 @@ def test_sampler_round_trip_matches_client_decoder() -> None:
     result = json.loads(output.payload, cls=RuntimeDecoder)
     counts = result[0].data.meas.get_counts()
     assert set(counts) <= {"00", "11"} and sum(counts.values()) == 200
-    assert output.is_stub is False and output.active_qubits == 2
+    assert output.is_stub is False and output.entangled_qubits == 2
 
 
 def test_sampler_uses_default_shots_when_pub_has_none() -> None:
@@ -71,8 +73,8 @@ def test_sampler_rejects_corrupt_circuit() -> None:
 
 def test_registry_rejects_unknown_program() -> None:
     """지원하지 않는 프로그램은 지원 목록과 함께 거절한다."""
-    with pytest.raises(UnsupportedProgramError, match="estimator"):
-        find_program_runner("estimator")
+    with pytest.raises(UnsupportedProgramError, match="noise-learner"):
+        find_program_runner("noise-learner")
     assert "sampler" in SUPPORTED_PROGRAM_IDS
 
 
@@ -97,3 +99,48 @@ def test_executor_rejects_non_object_params() -> None:
     """params가 객체가 아니면 내부 오류가 아니라 입력 오류다."""
     with pytest.raises(ProgramInputError, match="JSON 객체"):
         run_executor_program([1], SETTINGS)  # type: ignore[arg-type]
+
+
+def bell_state() -> QuantumCircuit:
+    """측정 없는 2큐비트 Bell 상태 준비 회로(Estimator 입력용)."""
+    circuit = QuantumCircuit(2)
+    circuit.h(0)
+    circuit.cx(0, 1)
+    return circuit
+
+
+def estimator_params(options: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Bell 상태에서 ZZ·ZI를 재는 EstimatorV2 입력(클라이언트와 같은 인코딩)."""
+    observables = [SparsePauliOp("ZZ"), SparsePauliOp("ZI")]
+    return encode_like_client({"pubs": [(bell_state(), observables)], "options": options or {}})
+
+
+def test_estimator_exact_expectation_values() -> None:
+    """정밀도를 지정하지 않으면 정확한 기대값(ZZ=1, ZI=0)과 표준편차 0을 돌려준다."""
+    output = run_estimator_program(estimator_params(), SETTINGS)
+    result = json.loads(output.payload, cls=RuntimeDecoder)
+    assert result[0].data.evs == pytest.approx([1.0, 0.0], abs=1e-9)
+    assert result[0].data.stds == pytest.approx([0.0, 0.0])
+    assert output.is_stub is False and output.entangled_qubits == 2
+
+
+def test_estimator_stub_over_limit_keeps_shape() -> None:
+    """얽힌 큐비트가 한도를 넘으면 모양이 같은 stub 기대값을 표시와 함께 돌려준다."""
+    output = run_estimator_program(
+        estimator_params({"default_precision": 0.01}), ExecutionSettings(1, 3)
+    )
+    result = json.loads(output.payload, cls=RuntimeDecoder)
+    assert output.is_stub is True and result.metadata["localqpu_stub"] is True
+    assert result[0].data.evs.shape == (2,) and all(abs(value) <= 1 for value in result[0].data.evs)
+    assert result[0].data.stds == pytest.approx([0.01, 0.01])
+
+
+def test_estimator_rejects_missing_pubs_with_structure_hint() -> None:
+    """pubs가 없으면 관측량을 포함한 입력 구조를 안내한다."""
+    with pytest.raises(ProgramInputError, match="관측량"):
+        run_estimator_program({"options": {}}, SETTINGS)
+
+
+def test_registry_includes_estimator() -> None:
+    """estimator가 레지스트리에 등록돼 있다."""
+    assert find_program_runner("estimator") is run_estimator_program

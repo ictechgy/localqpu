@@ -12,7 +12,7 @@ class ExecutionSettings:
     """작업 하나의 실행 설정.
 
     Attributes:
-        max_sim_qubits: 정확 시뮬레이션을 허용하는 최대 활성 큐비트 수.
+        max_sim_qubits: 정확 시뮬레이션을 허용하는 최대 얽힌 큐비트 수.
         seed: 시뮬레이션 시드. None이면 매번 다른 결과가 나온다.
     """
 
@@ -27,12 +27,12 @@ class ProgramOutput:
     Attributes:
         payload: GET /jobs/{id}/results로 그대로 내보낼 JSON 문자열.
         is_stub: 모양만 맞춘 무작위 결과인지.
-        active_qubits: 실행한 회로들의 최대 활성 큐비트 수.
+        entangled_qubits: 실행한 회로들의 최대 얽힌 큐비트 수.
     """
 
     payload: str
     is_stub: bool
-    active_qubits: int
+    entangled_qubits: int
 
 
 class ProgramInputError(ValueError):

@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-sim-qubits",
         type=_non_negative_int,
         default=DEFAULT_MAX_SIM_QUBITS,
-        help="정확 시뮬레이션 최대 활성 큐비트",
+        help="정확 시뮬레이션 최대 얽힌 큐비트(여러 큐비트 게이트가 걸린 큐비트) 수",
     )
     start.add_argument("--scenario", type=Path, help="장애 시나리오 JSON 파일")
     start.add_argument("--verbose", action="store_true", help="요청 본문 일부도 로그로 남긴다")

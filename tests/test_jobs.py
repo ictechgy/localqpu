@@ -18,7 +18,7 @@ from localqpu.programs.base import (
 )
 from localqpu.scenario import Scenario, ScenarioState, parse_scenario
 
-OK_OUTPUT = ProgramOutput(payload='{"ok": true}', is_stub=False, active_qubits=2)
+OK_OUTPUT = ProgramOutput(payload='{"ok": true}', is_stub=False, entangled_qubits=2)
 
 
 class FakeClock:
@@ -139,7 +139,7 @@ def test_cancel_after_completion_is_already_final() -> None:
 
 def test_stub_completion_is_logged(caplog: pytest.LogCaptureFixture) -> None:
     """stub 결과로 끝난 작업은 작업 ID와 함께 경고 로그를 남긴다."""
-    stub_output = ProgramOutput(payload="{}", is_stub=True, active_qubits=30)
+    stub_output = ProgramOutput(payload="{}", is_stub=True, entangled_qubits=30)
     manager = make_manager(runner=lambda params, settings: stub_output)
     with caplog.at_level(logging.WARNING, logger="localqpu.jobs"):
         job = poll_until_final(manager, manager.submit("sampler", "ibm_brisbane", {}).job_id)
@@ -207,7 +207,7 @@ def test_unsupported_program_is_rejected_before_registration() -> None:
 
     manager = JobManager(ScenarioState(), 24, runner_lookup=reject)
     with pytest.raises(UnsupportedProgramError):
-        manager.submit("estimator", "ibm_brisbane", {})
+        manager.submit("noise-learner", "ibm_brisbane", {})
     assert manager.list_jobs() == []
 
 

@@ -10,7 +10,8 @@ from localqpu.simulation import (
     CircuitShapeError,
     active_qubit_indices,
     compact_idle_qubits,
-    count_active_qubits,
+    count_entangled_qubits,
+    entangled_qubit_indices,
     sample_pubs,
 )
 
@@ -35,6 +36,8 @@ def sweep_pub() -> SamplerPub:
     register = ClassicalRegister(1, "c")
     circuit.add_register(register)
     circuit.ry(theta, 2)
+    # 측정 대상(2번)의 분포는 바꾸지 않으면서 얽힌 큐비트 2개를 만들어 stub 경로도 검사한다.
+    circuit.cx(2, 1)
     circuit.measure(2, register[0])
     return SamplerPub.coerce((circuit, np.array([[0.0], [np.pi], [np.pi / 2]]), 50))
 
@@ -44,12 +47,35 @@ def test_active_qubits_ignore_barriers() -> None:
     assert active_qubit_indices(wide_bell_circuit()) == [40, 90]
 
 
-def test_count_active_qubits_takes_maximum() -> None:
-    """여러 회로 중 가장 많은 활성 큐비트 수를 돌려준다."""
-    small = QuantumCircuit(5)
-    small.x(0)
-    assert count_active_qubits([small, wide_bell_circuit()]) == 2
-    assert count_active_qubits([]) == 0
+def test_entangled_qubits_ignore_single_qubit_and_measure_only_qubits() -> None:
+    """얽힌 큐비트는 여러 큐비트 게이트가 걸린 큐비트만 센다. 측정·단일 게이트만 걸린 큐비트는 빠진다."""
+    circuit = QuantumCircuit(127)
+    circuit.h(0)
+    circuit.cx(0, 1)
+    for qubit in range(127):
+        circuit.rz(0.3, qubit)
+    circuit.measure_all()
+    assert entangled_qubit_indices(circuit) == [0, 1]
+
+
+def test_count_entangled_qubits_takes_maximum() -> None:
+    """여러 회로 중 가장 많은 얽힌 큐비트 수를 돌려준다."""
+    single = QuantumCircuit(5)
+    single.x(0)
+    assert count_entangled_qubits([single, wide_bell_circuit()]) == 2
+    assert count_entangled_qubits([]) == 0
+
+
+def test_wide_measure_all_is_simulated_exactly() -> None:
+    """127큐비트를 모두 측정해도 얽힌 큐비트가 적으면 stub이 아니라 정확히 계산한다."""
+    circuit = QuantumCircuit(127)
+    circuit.h(0)
+    circuit.cx(0, 1)
+    circuit.measure_all()
+    outcome = sample_pubs([SamplerPub.coerce((circuit, None, 100))], 24, seed=6)
+    counts = outcome.result[0].data.meas.get_counts()
+    assert outcome.is_stub is False and outcome.entangled_qubits == 2
+    assert set(counts) <= {"0" * 127, "0" * 125 + "11"}
 
 
 def test_compaction_keeps_registers_and_shrinks_width() -> None:
@@ -73,7 +99,7 @@ def test_wide_bell_is_simulated_exactly() -> None:
     outcome = sample_pubs([pub], max_sim_qubits=24, seed=11)
     counts = outcome.result[0].data.meas.get_counts()
     assert set(counts) <= {"00", "11"} and sum(counts.values()) == 300
-    assert outcome.is_stub is False and outcome.active_qubits == 2
+    assert outcome.is_stub is False and outcome.entangled_qubits == 2
 
 
 def test_same_seed_gives_same_counts() -> None:

@@ -143,9 +143,9 @@ def test_usage_exhaustion_blocks_submission() -> None:
 
 def test_unsupported_program_is_404(server: RunningServer) -> None:
     """estimator는 지원 목록과 함께 404로 거절한다."""
-    payload = {**sampler_payload(), "program_id": "estimator"}
+    payload = {**sampler_payload(), "program_id": "noise-learner"}
     status, body = send_direct("POST", f"{server.url}/api/v1/jobs", payload)
-    assert status == 404 and "estimator" in body["errors"][0]["message"]
+    assert status == 404 and "noise-learner" in body["errors"][0]["message"]
 
 
 def test_unknown_backend_submission_is_400(server: RunningServer) -> None:

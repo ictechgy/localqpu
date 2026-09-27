@@ -79,6 +79,6 @@ def _job_summary(job: JobRecord) -> dict[str, Any]:
         "reason": job.reason,
         "reason_code": job.reason_code,
         "is_stub": job.is_stub,
-        "active_qubits": job.active_qubits,
+        "entangled_qubits": job.entangled_qubits,
         "polls": job.polls,
     }
