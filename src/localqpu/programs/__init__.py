@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from localqpu.programs.base import ProgramRunner, UnsupportedProgramError
+from localqpu.programs.executor import run_executor_program
 from localqpu.programs.sampler import run_sampler_program
 
 #: 지원하는 program_id와 실행 함수.
-_RUNNERS: dict[str, ProgramRunner] = {"sampler": run_sampler_program}
+_RUNNERS: dict[str, ProgramRunner] = {
+    "sampler": run_sampler_program,
+    "executor": run_executor_program,
+}
 
 #: 지원하는 program_id 목록(오류 메시지와 문서용).
 SUPPORTED_PROGRAM_IDS: tuple[str, ...] = tuple(sorted(_RUNNERS))

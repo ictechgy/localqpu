@@ -9,6 +9,7 @@ from qiskit import QuantumCircuit
 from localqpu._compat import RuntimeDecoder, RuntimeEncoder
 from localqpu.programs import SUPPORTED_PROGRAM_IDS, find_program_runner
 from localqpu.programs.base import ExecutionSettings, ProgramInputError, UnsupportedProgramError
+from localqpu.programs.executor import run_executor_program
 from localqpu.programs.sampler import run_sampler_program
 
 SETTINGS = ExecutionSettings(max_sim_qubits=24, seed=7)
@@ -65,3 +66,20 @@ def test_registry_rejects_unknown_program() -> None:
     with pytest.raises(UnsupportedProgramError, match="estimator"):
         find_program_runner("estimator")
     assert "sampler" in SUPPORTED_PROGRAM_IDS
+
+
+def test_executor_rejects_other_schema_versions() -> None:
+    """v2.0이 아닌 스키마는 버전 안내와 함께 거절한다."""
+    with pytest.raises(ProgramInputError, match="v2.0"):
+        run_executor_program({"schema_version": "v9.9"}, SETTINGS)
+
+
+def test_executor_rejects_malformed_v2_params() -> None:
+    """v2.0이라도 형식이 틀리면 입력 오류가 난다."""
+    with pytest.raises(ProgramInputError, match="executor 입력"):
+        run_executor_program({"schema_version": "v2.0", "quantum_program": {}}, SETTINGS)
+
+
+def test_registry_includes_executor() -> None:
+    """executor가 레지스트리에 등록돼 있다."""
+    assert find_program_runner("executor") is run_executor_program
