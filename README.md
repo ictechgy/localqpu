@@ -43,6 +43,28 @@ backend = service.least_busy()
 >
 > Note that `connect()` changes process-wide environment variables: it sets `IAM_URL` and appends `localqpu.test` to `NO_PROXY`/`no_proxy` (so that `HTTP_PROXY` settings cannot redirect localqpu traffic to a corporate proxy). Run tests that talk to the real IBM Cloud in a separate process.
 
+## AWS Braket (experimental)
+
+Install the extra (Python 3.11+, because the Braket packages require it) and point the Amazon Braket SDK at localqpu:
+
+```bash
+pip install 'localqpu[braket]'
+```
+
+```python
+import localqpu
+from braket.aws import AwsDevice
+from braket.circuits import Circuit
+
+session = localqpu.connect_braket(port=8787)
+device = AwsDevice("arn:aws:braket:::device/quantum-simulator/amazon/sv1", aws_session=session)
+counts = device.run(Circuit().h(0).cnot(0, 1), shots=100).result().measurement_counts
+```
+
+- Emulates the SV1 simulator only, for gate-model OpenQASM tasks: create/get/cancel quantum tasks, get/search devices, and the S3 `results.json` download. Tasks share the job manager with IBM jobs, so failure scenarios (`next_jobs`, `failures`, `queue`) apply to them too.
+- ⚠️ `connect_braket()` changes process-wide environment variables: it points `AWS_ENDPOINT_URL` (and the S3/Braket/STS-specific variants) at localqpu. The Braket SDK copies sessions internally and the copies lose explicitly passed clients — without this, result downloads went to the real AWS S3. With it, any AWS call the SDK makes lands on localqpu (unknown ones fail with 501) instead of leaking.
+- Qubits are limited by `--max-sim-qubits` (all declared qubits count, since entanglement is not analysed for Braket programs). There is no stub mode and no seed control for Braket tasks.
+
 ## Use with pytest
 
 The fixtures are registered automatically once the package is installed.
@@ -119,7 +141,7 @@ Circuits arrive laid out on the full chip (e.g. 127 qubits), but what makes simu
 
 ## Limitations
 
-- IBM Quantum Platform only. Qiskit Functions are not supported yet.
+- IBM Quantum Platform, plus AWS Braket SV1 as an experimental extra. Qiskit Functions are not supported yet.
 - `Session` and `Batch` are supported (create, status, `close()`, `cancel()`, `from_id`), but session timeouts (`max_time`, interactive timeout) are not emulated.
 - Noiseless by default; set `"noise": true` in the scenario to add the chip's noise model.
 - Jobs are kept in memory only and are lost when the server restarts.
