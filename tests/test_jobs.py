@@ -292,3 +292,14 @@ def test_params_are_released_after_leaving_queue() -> None:
     job = manager.submit("sampler", "ibm_brisbane", {"pubs": ["big"]})
     finished = poll_until_final(manager, job.job_id)
     assert finished.params == {}
+
+
+def test_cancel_session_jobs_cancels_only_that_session() -> None:
+    """세션 취소는 그 세션의 끝나지 않은 작업만 취소한다."""
+    manager = make_manager(parse_scenario({"queue": {"polls_before_running": 100}}))
+    in_session = manager.submit("sampler", "ibm_brisbane", {}, session_id="s-1")
+    other = manager.submit("sampler", "ibm_brisbane", {}, session_id="s-2")
+    assert manager.cancel_session_jobs("s-1") == 1
+    assert manager.get(in_session.job_id).status == "Cancelled"
+    assert manager.get(other.job_id).status == "Queued"
+    assert manager.get(in_session.job_id).session_id == "s-1"

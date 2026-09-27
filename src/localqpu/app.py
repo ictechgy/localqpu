@@ -6,9 +6,11 @@ from localqpu.context import AppContext, ServerConfig
 from localqpu.control import register_control_routes
 from localqpu.ibm.backends import BackendCatalog
 from localqpu.ibm.routes import register_ibm_routes
+from localqpu.ibm.session_routes import register_session_routes
 from localqpu.jobs import JobManager
 from localqpu.scenario import ScenarioState, ensure_known_backends
 from localqpu.server import Router, RunningServer, ServerStats, serve
+from localqpu.sessions import SessionManager
 
 
 def build_context(config: ServerConfig) -> AppContext:
@@ -27,6 +29,7 @@ def build_context(config: ServerConfig) -> AppContext:
         scenario_state=scenario_state,
         jobs=JobManager(scenario_state, config.max_sim_qubits),
         stats=ServerStats(),
+        sessions=SessionManager(),
     )
 
 
@@ -34,6 +37,7 @@ def build_router(context: AppContext) -> Router:
     """모든 라우트를 등록한 라우터."""
     router = Router()
     register_ibm_routes(router, context)
+    register_session_routes(router, context)
     register_control_routes(router, context)
     return router
 

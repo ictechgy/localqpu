@@ -60,6 +60,7 @@ def put_scenario(context: AppContext, request: Request, params: dict[str, str]) 
 def reset_state(context: AppContext, request: Request, params: dict[str, str]) -> Response:
     """작업 기록, 시나리오(시작 시점으로), 통계를 초기화한다. 작업·시나리오는 한 잠금에서 함께 되돌린다."""
     context.jobs.reset()
+    context.sessions.reset()
     context.stats.reset()
     return Response(204)
 
@@ -80,5 +81,6 @@ def _job_summary(job: JobRecord) -> dict[str, Any]:
         "reason_code": job.reason_code,
         "is_stub": job.is_stub,
         "entangled_qubits": job.entangled_qubits,
+        "session_id": job.session_id,
         "polls": job.polls,
     }

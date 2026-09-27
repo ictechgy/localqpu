@@ -91,3 +91,13 @@ def test_put_broken_json_is_400_and_keeps_previous(server: RunningServer) -> Non
     response = connection.getresponse()
     assert response.status == 400 and "column" in response.read().decode()
     assert control.scenario()["seed"] == 7
+
+
+def test_reset_clears_sessions(server: RunningServer) -> None:
+    """reset은 세션도 지운다."""
+    control = LocalqpuControl(server.url)
+    _, created = send_direct(
+        "POST", f"{server.url}/api/v1/sessions", {"mode": "dedicated", "backend": "ibm_brisbane"}
+    )
+    control.reset()
+    assert send_direct("GET", f"{server.url}/api/v1/sessions/{created['id']}")[0] == 404
