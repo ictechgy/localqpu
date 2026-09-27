@@ -1,5 +1,6 @@
 # v* 태그를 푸시하면 검사 → 빌드 → PyPI 게시를 한다.
 # PyPI Trusted Publishing(OIDC)을 쓰므로 API 토큰을 저장소에 두지 않는다.
+# 외부 액션은 태그가 바뀌어도 영향받지 않도록 커밋 SHA로 고정한다(주석은 해당 버전).
 # PyPI 쪽 pending publisher 설정: owner=ictechgy, repository=localqpu, workflow=release.yml, environment=pypi
 name: release
 on:
@@ -11,8 +12,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - name: 태그와 pyproject 버전이 같은지 확인
         run: |
           version=$(uv run --no-project --python 3.12 python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
@@ -28,7 +29,7 @@ jobs:
       - run: uv run --no-sync pytest -q
       - name: 배포물 빌드
         run: uv build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist
           path: dist/
@@ -42,8 +43,8 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: dist
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
