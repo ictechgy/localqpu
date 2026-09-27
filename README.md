@@ -10,8 +10,24 @@ Like a payment provider's "test mode", it lets you test code that calls a quantu
 ```bash
 pip install localqpu      # https://pypi.org/project/localqpu/
 localqpu start            # http://127.0.0.1:8787
-# or
-docker build -t localqpu . && docker run -p 127.0.0.1:8787:8787 localqpu
+```
+
+### Docker
+
+Multi-arch images (amd64, arm64) are published to GHCR for every release from v0.2.0 on:
+
+```bash
+docker run -p 127.0.0.1:8787:8787 ghcr.io/ictechgy/localqpu:latest
+```
+
+The image runs as an unprivileged user and has a `HEALTHCHECK` on `/_localqpu/health`, so it works as a CI service container — handy when the code under test is not Python:
+
+```yaml
+# GitHub Actions
+services:
+  localqpu:
+    image: ghcr.io/ictechgy/localqpu:latest
+    ports: ["8787:8787"]
 ```
 
 ## Connect existing Qiskit code
