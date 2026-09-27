@@ -83,3 +83,9 @@ def test_executor_rejects_malformed_v2_params() -> None:
 def test_registry_includes_executor() -> None:
     """executor가 레지스트리에 등록돼 있다."""
     assert find_program_runner("executor") is run_executor_program
+
+
+def test_executor_rejects_non_object_params() -> None:
+    """params가 객체가 아니면 내부 오류가 아니라 입력 오류다."""
+    with pytest.raises(ProgramInputError, match="JSON 객체"):
+        run_executor_program([1], SETTINGS)  # type: ignore[arg-type]

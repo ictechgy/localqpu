@@ -183,3 +183,23 @@ def test_cancel_and_results_conflicts() -> None:
         assert send_direct("POST", f"{job_url}/cancel")[0] == 409
     finally:
         running.stop()
+
+
+@pytest.mark.parametrize(
+    ("override", "expected_field"),
+    [
+        ({"backend": ["ibm_brisbane"]}, "backend"),
+        ({"backend": {"name": "ibm_brisbane"}}, "backend"),
+        ({"program_id": None}, "program_id"),
+        ({"program_id": 7}, "program_id"),
+        ({"params": [1]}, "params"),
+    ],
+)
+def test_malformed_submission_is_400(
+    server: RunningServer, override: dict[str, Any], expected_field: str
+) -> None:
+    """형식이 틀린 제출 본문은 500이나 엉뚱한 404가 아니라 필드 이름을 담은 400이다."""
+    status, body = send_direct(
+        "POST", f"{server.url}/api/v1/jobs", {**sampler_payload(), **override}
+    )
+    assert status == 400 and expected_field in body["errors"][0]["message"]
