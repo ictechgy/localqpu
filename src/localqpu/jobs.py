@@ -127,7 +127,9 @@ class JobManager:
                 params=params,
                 planned=self._scenario_state.next_outcome(),
                 settings=ExecutionSettings(
-                    self._max_sim_qubits, self._scenario_state.derive_seed()
+                    self._max_sim_qubits,
+                    self._scenario_state.derive_seed(),
+                    backend_name if self._scenario_state.current().noise else None,
                 ),
                 submitted_at=self._clock(),
                 created=utc_now_iso(),

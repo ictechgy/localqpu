@@ -26,8 +26,9 @@ from localqpu._compat import (
     run_quantum_program,
     semantic_role_of,
 )
+from localqpu.noise import aer_backend_options
 from localqpu.programs.base import ExecutionSettings, ProgramInputError, ProgramOutput
-from localqpu.simulation import EXACT_AER_BACKEND_OPTIONS, count_entangled_qubits
+from localqpu.simulation import count_entangled_qubits
 
 #: 지원하는 executor 입력 스키마 버전(qiskit-ibm-runtime 0.50의 기본값).
 SUPPORTED_EXECUTOR_SCHEMA: str = "v2.0"
@@ -43,7 +44,9 @@ def run_executor_program(params: dict[str, Any], settings: ExecutionSettings) ->
     entangled_qubits = count_entangled_qubits(item.circuit for item in program.items)
     _ensure_within_limit(entangled_qubits, settings.max_sim_qubits)
     options = SimulatorOptions(seed_simulator=_resolve_seed(settings.seed))
-    result = run_quantum_program(AerSimulator(**EXACT_AER_BACKEND_OPTIONS), program, options)
+    result = run_quantum_program(
+        AerSimulator(**aer_backend_options(settings.noise_backend)), program, options
+    )
     return ProgramOutput(
         payload=_encode_result(program, result), is_stub=False, entangled_qubits=entangled_qubits
     )

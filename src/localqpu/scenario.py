@@ -22,7 +22,7 @@ BackendStatusKind = Literal["online", "offline", "paused"]
 
 #: 시나리오 JSON 최상위에서 허용하는 키.
 _TOP_LEVEL_KEYS: frozenset[str] = frozenset(
-    {"seed", "queue", "failures", "next_jobs", "backends", "usage", "auth"}
+    {"seed", "queue", "failures", "next_jobs", "backends", "usage", "auth", "noise"}
 )
 
 
@@ -140,6 +140,7 @@ class Scenario:
     backends: Mapping[str, BackendOverride] = field(default_factory=dict)
     usage: UsageSettings = field(default_factory=UsageSettings)
     reject_tokens: bool = False
+    noise: bool = False
 
     def backend_override(self, name: str) -> BackendOverride:
         """백엔드의 상태 설정을 돌려준다. 지정하지 않았으면 온라인이다."""
@@ -162,6 +163,7 @@ def parse_scenario(raw: object) -> Scenario:
         backends=_parse_backends(mapping.get("backends", {})),
         usage=_build(UsageSettings, mapping.get("usage"), "usage"),
         reject_tokens=_parse_reject_tokens(mapping.get("auth", {})),
+        noise=_parse_noise(mapping.get("noise", False)),
     )
 
 
@@ -202,6 +204,13 @@ def _parse_backends(raw: object) -> dict[str, BackendOverride]:
     return {
         name: _build(BackendOverride, value, f"backends.{name}") for name, value in mapping.items()
     }
+
+
+def _parse_noise(raw: object) -> bool:
+    """noise 플래그를 읽는다."""
+    if not isinstance(raw, bool):
+        raise ScenarioError("noise는 true 또는 false여야 합니다.")
+    return raw
 
 
 def _parse_reject_tokens(raw: object) -> bool:

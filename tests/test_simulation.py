@@ -161,3 +161,31 @@ def test_classical_feedforward_is_simulated() -> None:
     outcome = sample_pubs([SamplerPub.coerce((circuit, None, 200))], 24, seed=5)
     counts = outcome.result[0].data.c.get_counts()
     assert set(counts) <= {"00", "11"} and sum(counts.values()) == 200
+
+
+def brisbane_bell_pub(shots: int) -> SamplerPub:
+    """ibm_brisbane 칩에 맞게 배치한 Bell 회로 PUB(노이즈 모델은 물리 큐비트 기준이라 배치가 필요)."""
+    from qiskit.transpiler import generate_preset_pass_manager
+
+    from localqpu.noise import fake_backend_for
+
+    circuit = QuantumCircuit(2)
+    circuit.h(0)
+    circuit.cx(0, 1)
+    circuit.measure_all()
+    backend = fake_backend_for("ibm_brisbane")
+    isa = generate_preset_pass_manager(backend=backend, optimization_level=1).run(circuit)
+    return SamplerPub.coerce((isa, None, shots))
+
+
+def test_noise_introduces_errors_on_bell() -> None:
+    """노이즈를 켜면 Bell 회로에 01·10 오류가 섞이고, 끄면 없다."""
+    pub = brisbane_bell_pub(4000)
+    noisy = (
+        sample_pubs([pub], 24, seed=7, noise_backend="ibm_brisbane")
+        .result[0]
+        .data.meas.get_counts()
+    )
+    ideal = sample_pubs([pub], 24, seed=7).result[0].data.meas.get_counts()
+    assert noisy.get("01", 0) + noisy.get("10", 0) > 0
+    assert set(ideal) <= {"00", "11"}

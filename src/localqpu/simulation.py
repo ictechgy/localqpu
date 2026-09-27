@@ -18,11 +18,10 @@ from qiskit.primitives.containers import BitArray, DataBin, PrimitiveResult, Sam
 from qiskit.primitives.containers.sampler_pub import SamplerPub
 from qiskit_aer.primitives import SamplerV2 as AerSampler
 
+from localqpu.noise import aer_backend_options
+
 #: 큐비트를 "사용 중"으로 만들지 않는 연산. 배치 후 회로에는 전 큐비트 barrier가 흔하다.
 _NON_COMPUTATIONAL_OPERATIONS: frozenset[str] = frozenset({"barrier", "delay"})
-
-#: 정확 계산에 쓰는 Aer 옵션. MPS는 절단 설정이 없으면 정확하고, 넓지만 덜 얽힌 회로에 빠르다.
-EXACT_AER_BACKEND_OPTIONS: dict[str, str] = {"method": "matrix_product_state"}
 
 
 class CircuitShapeError(ValueError):
@@ -91,21 +90,29 @@ def compact_idle_qubits(circuit: QuantumCircuit) -> QuantumCircuit:
 
 
 def sample_pubs(
-    pubs: Sequence[SamplerPub], max_sim_qubits: int, seed: int | None
+    pubs: Sequence[SamplerPub],
+    max_sim_qubits: int,
+    seed: int | None,
+    noise_backend: str | None = None,
 ) -> SimulationOutcome:
-    """PUB들을 샘플링한다. 얽힌 큐비트가 한도를 넘으면 stub을 만든다."""
+    """PUB들을 샘플링한다. 얽힌 큐비트가 한도를 넘으면 stub을 만든다.
+
+    노이즈가 있으면 노이즈 모델이 물리 큐비트 번호 기준이므로 유휴 큐비트를 걸러내지 않는다.
+    """
     entangled_qubits = count_entangled_qubits(pub.circuit for pub in pubs)
     if entangled_qubits > max_sim_qubits:
         stub = _stub_result(pubs, np.random.default_rng(seed))
         return SimulationOutcome(stub, is_stub=True, entangled_qubits=entangled_qubits)
-    compacted = [
-        SamplerPub(compact_idle_qubits(pub.circuit), pub.parameter_values, pub.shots)
-        for pub in pubs
-    ]
+    runnable = list(pubs) if noise_backend is not None else [_compacted(pub) for pub in pubs]
     # 중간 측정·조건 분기(동적 회로)를 실제 하드웨어처럼 지원하려고 Aer를 쓴다.
-    sampler = AerSampler(seed=seed, options={"backend_options": EXACT_AER_BACKEND_OPTIONS})
-    result = sampler.run(compacted).result()
+    sampler = AerSampler(seed=seed, options={"backend_options": aer_backend_options(noise_backend)})
+    result = sampler.run(runnable).result()
     return SimulationOutcome(result, is_stub=False, entangled_qubits=entangled_qubits)
+
+
+def _compacted(pub: SamplerPub) -> SamplerPub:
+    """유휴 큐비트를 걸러낸 PUB."""
+    return SamplerPub(compact_idle_qubits(pub.circuit), pub.parameter_values, pub.shots)
 
 
 def _ensure_registered_clbits(circuit: QuantumCircuit) -> None:

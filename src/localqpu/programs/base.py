@@ -14,10 +14,12 @@ class ExecutionSettings:
     Attributes:
         max_sim_qubits: 정확 시뮬레이션을 허용하는 최대 얽힌 큐비트 수.
         seed: 시뮬레이션 시드. None이면 매번 다른 결과가 나온다.
+        noise_backend: 노이즈를 흉내 낼 칩 이름. None이면 노이즈 없는 정확 계산.
     """
 
     max_sim_qubits: int
     seed: int | None
+    noise_backend: str | None = None
 
 
 @dataclass(frozen=True)
