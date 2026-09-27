@@ -74,7 +74,7 @@ class JobRecord:
     polls: int = 0
     result_payload: str | None = field(default=None, repr=False)
     is_stub: bool = False
-    active_qubits: int | None = None
+    entangled_qubits: int | None = None
     future: Future[ProgramOutput] | None = field(default=None, repr=False, compare=False)
 
     @property
@@ -253,12 +253,12 @@ class JobManager:
             )
         else:
             job.status, job.result_payload = "Completed", output.payload
-            job.is_stub, job.active_qubits = output.is_stub, output.active_qubits
+            job.is_stub, job.entangled_qubits = output.is_stub, output.entangled_qubits
             if output.is_stub:
                 logger.warning(
-                    "작업 %s: 활성 큐비트 %d개가 한도(%d)를 넘어 stub 결과를 돌려줍니다.",
+                    "작업 %s: 얽힌 큐비트 %d개가 한도(%d)를 넘어 stub 결과를 돌려줍니다.",
                     job.job_id,
-                    output.active_qubits,
+                    output.entangled_qubits,
                     job.settings.max_sim_qubits,
                 )
 

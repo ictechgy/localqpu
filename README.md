@@ -84,11 +84,23 @@ Use `localqpu start --scenario scenario.json` or `localqpu_control.set_scenario(
 | `POST /_localqpu/reset` | Reset jobs, scenario, and stats |
 | `GET /_localqpu/jobs` | Summary of submitted jobs |
 
-## Limitations (v0.1)
+## Supported primitives
 
-- IBM Quantum Platform only. Supported programs: the legacy `SamplerV2` (`sampler`) and the new executor-based Sampler (`executor`, schema v2.0).
-- Noiseless simulation. If the number of active qubits exceeds `--max-sim-qubits` (default 24), the sampler returns a shape-correct stub result (`metadata["localqpu_stub"]`) and the executor fails with guidance.
-- Estimator, Session/Batch, and Qiskit Functions are not supported yet.
+| Qiskit primitive | Program | Notes |
+|---|---|---|
+| `SamplerV2` (legacy) | `sampler` | Exact, including mid-circuit measurements and `if_test` |
+| `executor_sampler.Sampler` | `executor` (schema v2.0) | Exact |
+| `EstimatorV2` (legacy) | `estimator` | Exact expectation values when no precision is requested; with a precision, Aer adds Gaussian noise of that size |
+| `executor_estimator.Estimator` | `executor` (schema v2.0) | Expectation values are computed by the client from sampled measurements |
+
+## Simulation size
+
+Circuits arrive laid out on the full chip (e.g. 127 qubits), but what makes simulation expensive is entanglement, not width. localqpu therefore limits the number of **entangled qubits** — qubits touched by multi-qubit gates — with `--max-sim-qubits` (default 24), and simulates exactly with Aer's matrix-product-state method, which is cheap for qubits that only get single-qubit gates or measurements. Above the limit, `sampler` and `estimator` return a shape-correct stub result (`metadata["localqpu_stub"]`) and `executor` fails with guidance.
+
+## Limitations
+
+- IBM Quantum Platform only. Session/Batch mode and Qiskit Functions are not supported yet.
+- Noiseless simulation.
 - Jobs are kept in memory only and are lost when the server restarts.
 - A running simulation cannot be interrupted. `POST /_localqpu/reset` (used by the pytest fixtures between tests) discards its result and starts a fresh worker pool, so later jobs are not blocked, but the old computation keeps using CPU until it finishes.
 - Failure reasons use localqpu codes: `9000` for localqpu-side failures (invalid input, simulation limits) and `9001` for user cancellation.

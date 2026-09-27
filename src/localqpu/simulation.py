@@ -1,8 +1,9 @@
 """회로 시뮬레이션.
 
-칩 배치가 끝난 회로는 칩 전체 폭(예: 127큐비트)을 가지므로 그대로 statevector로 돌리면
-메모리가 2^127로 폭증한다. 실제로 쓰인 큐비트만 남겨 정확히 계산하고, 그래도 한도를 넘으면
-결과 모양만 맞춘 stub을 돌려준다(설계서 5.6절).
+칩 배치가 끝난 회로는 칩 전체 폭(예: 127큐비트)을 가진다. 계산 비용을 좌우하는 것은 폭이 아니라
+여러 큐비트 게이트로 얽힌 큐비트 수이므로, 한도는 얽힌 큐비트 수로 판단하고 정확 계산은
+Aer MPS(matrix_product_state)로 한다. 얽히지 않은 큐비트는 곱 상태라 비용이 거의 없다.
+한도를 넘으면 결과 모양만 맞춘 stub을 돌려준다(v0.2 설계서 1절).
 """
 
 from __future__ import annotations
@@ -20,6 +21,9 @@ from qiskit_aer.primitives import SamplerV2 as AerSampler
 #: 큐비트를 "사용 중"으로 만들지 않는 연산. 배치 후 회로에는 전 큐비트 barrier가 흔하다.
 _NON_COMPUTATIONAL_OPERATIONS: frozenset[str] = frozenset({"barrier", "delay"})
 
+#: 정확 계산에 쓰는 Aer 옵션. MPS는 절단 설정이 없으면 정확하고, 넓지만 덜 얽힌 회로에 빠르다.
+EXACT_AER_BACKEND_OPTIONS: dict[str, str] = {"method": "matrix_product_state"}
+
 
 class CircuitShapeError(ValueError):
     """localqpu가 아직 다루지 못하는 회로 구조. 메시지에 회로를 고치는 방법을 담는다."""
@@ -32,12 +36,12 @@ class SimulationOutcome:
     Attributes:
         result: 클라이언트에 돌려줄 PrimitiveResult.
         is_stub: 정확 계산 대신 모양만 맞춘 무작위 값인지.
-        active_qubits: PUB들 중 가장 많은 활성 큐비트 수.
+        entangled_qubits: PUB들 중 가장 많은 얽힌 큐비트 수(한도 판단 기준).
     """
 
     result: PrimitiveResult
     is_stub: bool
-    active_qubits: int
+    entangled_qubits: int
 
 
 def active_qubit_indices(circuit: QuantumCircuit) -> list[int]:
@@ -51,9 +55,23 @@ def active_qubit_indices(circuit: QuantumCircuit) -> list[int]:
     return sorted(indices)
 
 
-def count_active_qubits(circuits: Iterable[QuantumCircuit]) -> int:
-    """여러 회로 중 가장 많은 활성 큐비트 수. 회로가 없으면 0."""
-    return max((len(active_qubit_indices(circuit)) for circuit in circuits), default=0)
+def entangled_qubit_indices(circuit: QuantumCircuit) -> list[int]:
+    """두 개 이상의 큐비트에 걸린 연산(barrier 제외)의 큐비트 인덱스를 오름차순으로 돌려준다.
+
+    제어 흐름 연산은 블록 안의 모든 큐비트에 걸쳐 있으므로 보수적으로 얽힌 것으로 센다.
+    """
+    indices = {
+        circuit.find_bit(qubit).index
+        for instruction in circuit.data
+        if instruction.operation.name != "barrier" and len(instruction.qubits) >= 2
+        for qubit in instruction.qubits
+    }
+    return sorted(indices)
+
+
+def count_entangled_qubits(circuits: Iterable[QuantumCircuit]) -> int:
+    """여러 회로 중 가장 많은 얽힌 큐비트 수. 회로가 없으면 0."""
+    return max((len(entangled_qubit_indices(circuit)) for circuit in circuits), default=0)
 
 
 def compact_idle_qubits(circuit: QuantumCircuit) -> QuantumCircuit:
@@ -75,18 +93,19 @@ def compact_idle_qubits(circuit: QuantumCircuit) -> QuantumCircuit:
 def sample_pubs(
     pubs: Sequence[SamplerPub], max_sim_qubits: int, seed: int | None
 ) -> SimulationOutcome:
-    """PUB들을 샘플링한다. 활성 큐비트가 한도를 넘으면 stub을 만든다."""
-    active_qubits = count_active_qubits(pub.circuit for pub in pubs)
-    if active_qubits > max_sim_qubits:
+    """PUB들을 샘플링한다. 얽힌 큐비트가 한도를 넘으면 stub을 만든다."""
+    entangled_qubits = count_entangled_qubits(pub.circuit for pub in pubs)
+    if entangled_qubits > max_sim_qubits:
         stub = _stub_result(pubs, np.random.default_rng(seed))
-        return SimulationOutcome(stub, is_stub=True, active_qubits=active_qubits)
+        return SimulationOutcome(stub, is_stub=True, entangled_qubits=entangled_qubits)
     compacted = [
         SamplerPub(compact_idle_qubits(pub.circuit), pub.parameter_values, pub.shots)
         for pub in pubs
     ]
     # 중간 측정·조건 분기(동적 회로)를 실제 하드웨어처럼 지원하려고 Aer를 쓴다.
-    result = AerSampler(seed=seed).run(compacted).result()
-    return SimulationOutcome(result, is_stub=False, active_qubits=active_qubits)
+    sampler = AerSampler(seed=seed, options={"backend_options": EXACT_AER_BACKEND_OPTIONS})
+    result = sampler.run(compacted).result()
+    return SimulationOutcome(result, is_stub=False, entangled_qubits=entangled_qubits)
 
 
 def _ensure_registered_clbits(circuit: QuantumCircuit) -> None:

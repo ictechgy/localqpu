@@ -30,6 +30,18 @@ from qiskit_ibm_runtime.quantum_program.converters.converters_2_0 import (
 FAKE_PROVIDER_BACKENDS_DIR: Path = Path(_fake_provider_package.__file__).parent / "backends"
 
 
+def finalize_samplex_items(program: Any) -> None:
+    """JSON에서 되살린 samplex를 실행할 수 있게 완성한다.
+
+    converters_2_0은 samplex를 finalize 전 상태로 되살린다(to_samplex). 클라이언트 로컬 모드는
+    이미 완성된 객체를 넘기므로 이 단계가 없지만, localqpu는 전송 형식에서 복원하므로 필요하다.
+    """
+    for item in program.items:
+        samplex = getattr(item, "samplex", None)
+        if samplex is not None and not getattr(samplex, "_finalized", True):
+            samplex.finalize()
+
+
 def semantic_role_of(program: Any) -> str | None:
     """QuantumProgram의 semantic_role. 클라이언트가 비공개 속성에 두므로 여기서만 읽는다."""
     return getattr(program, "_semantic_role", None)
@@ -39,6 +51,7 @@ __all__ = [
     "FAKE_PROVIDER_BACKENDS_DIR",
     "CompressedTensorModel",
     "ExecutorParamsModel",
+    "finalize_samplex_items",
     "ItemMetadataModel",
     "MetadataModel",
     "QuantumProgramResultItemModel",

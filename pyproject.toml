@@ -77,4 +77,5 @@ filterwarnings = [
     "ignore::DeprecationWarning:qiskit_ibm_runtime.*",
     # 계약 테스트는 폐기 예정인 기존 SamplerV2 호환을 일부러 검증한다.
     "ignore:The SamplerV2 class is deprecated:DeprecationWarning",
+    "ignore:The EstimatorV2 class is deprecated:DeprecationWarning",
 ]

@@ -20,27 +20,32 @@ from localqpu._compat import (
     QuantumProgramResultItemModel,
     QuantumProgramResultModel,
     SimulatorOptions,
+    finalize_samplex_items,
     passthrough_data_to_2_0,
     quantum_program_from_2_0,
     run_quantum_program,
     semantic_role_of,
 )
 from localqpu.programs.base import ExecutionSettings, ProgramInputError, ProgramOutput
-from localqpu.simulation import count_active_qubits
+from localqpu.simulation import EXACT_AER_BACKEND_OPTIONS, count_entangled_qubits
 
 #: 지원하는 executor 입력 스키마 버전(qiskit-ibm-runtime 0.50의 기본값).
 SUPPORTED_EXECUTOR_SCHEMA: str = "v2.0"
 
 
 def run_executor_program(params: dict[str, Any], settings: ExecutionSettings) -> ProgramOutput:
-    """executor 입력을 노이즈 없는 Aer 시뮬레이터로 실행하고 v2.0 결과 JSON을 돌려준다."""
+    """executor 입력을 노이즈 없는 Aer MPS 시뮬레이터로 실행하고 v2.0 결과 JSON을 돌려준다.
+
+    executor 회로는 칩 전체 폭으로 오고(Estimator는 관측량 측정을 칩 전체에 붙인다) samplex 구조
+    때문에 큐비트를 걸러낼 수 없으므로, 폭에 강한 MPS로 그대로 계산한다.
+    """
     program = _decode_program(params)
-    active_qubits = count_active_qubits(item.circuit for item in program.items)
-    _ensure_within_limit(active_qubits, settings.max_sim_qubits)
+    entangled_qubits = count_entangled_qubits(item.circuit for item in program.items)
+    _ensure_within_limit(entangled_qubits, settings.max_sim_qubits)
     options = SimulatorOptions(seed_simulator=_resolve_seed(settings.seed))
-    result = run_quantum_program(AerSimulator(), program, options)
+    result = run_quantum_program(AerSimulator(**EXACT_AER_BACKEND_OPTIONS), program, options)
     return ProgramOutput(
-        payload=_encode_result(program, result), is_stub=False, active_qubits=active_qubits
+        payload=_encode_result(program, result), is_stub=False, entangled_qubits=entangled_qubits
     )
 
 
@@ -56,6 +61,7 @@ def _decode_program(params: dict[str, Any]) -> Any:
         )
     try:
         program, _options = quantum_program_from_2_0(ExecutorParamsModel.model_validate(params))
+        finalize_samplex_items(program)
     except Exception as error:
         # pydantic 검증·QPY 해석 실패를 사용자 메시지로 바꾼다.
         raise ProgramInputError(
@@ -64,11 +70,11 @@ def _decode_program(params: dict[str, Any]) -> Any:
     return program
 
 
-def _ensure_within_limit(active_qubits: int, limit: int) -> None:
-    """활성 큐비트가 한도를 넘으면 실패시킨다. executor는 v0.1에서 stub을 지원하지 않는다."""
-    if active_qubits > limit:
+def _ensure_within_limit(entangled_qubits: int, limit: int) -> None:
+    """얽힌 큐비트가 한도를 넘으면 실패시킨다. executor는 아직 stub을 지원하지 않는다."""
+    if entangled_qubits > limit:
         raise ProgramInputError(
-            f"활성 큐비트 {active_qubits}개가 --max-sim-qubits({limit})를 넘습니다. "
+            f"얽힌 큐비트 {entangled_qubits}개가 --max-sim-qubits({limit})를 넘습니다. "
             "executor는 v0.1에서 stub 모드를 지원하지 않으니 한도를 올리거나 회로를 줄이세요."
         )
 

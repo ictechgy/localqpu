@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from localqpu.programs.base import ProgramRunner, UnsupportedProgramError
+from localqpu.programs.estimator import run_estimator_program
 from localqpu.programs.executor import run_executor_program
 from localqpu.programs.sampler import run_sampler_program
 
@@ -10,6 +11,7 @@ from localqpu.programs.sampler import run_sampler_program
 _RUNNERS: dict[str, ProgramRunner] = {
     "sampler": run_sampler_program,
     "executor": run_executor_program,
+    "estimator": run_estimator_program,
 }
 
 #: 지원하는 program_id 목록(오류 메시지와 문서용).
@@ -26,6 +28,6 @@ def find_program_runner(program_id: str) -> ProgramRunner:
         return _RUNNERS[program_id]
     except KeyError as error:
         raise UnsupportedProgramError(
-            f"localqpu v0.1은 '{program_id}' 프로그램을 지원하지 않습니다"
+            f"localqpu는 '{program_id}' 프로그램을 지원하지 않습니다"
             f"(지원: {', '.join(SUPPORTED_PROGRAM_IDS)})."
         ) from error

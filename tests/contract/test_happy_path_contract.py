@@ -1,7 +1,11 @@
 """실제 qiskit-ibm-runtime 클라이언트로 정상 경로를 검증한다."""
 
 import pytest
-from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
+from qiskit import QuantumCircuit
+from qiskit.quantum_info import SparsePauliOp
+from qiskit.transpiler import generate_preset_pass_manager
+from qiskit_ibm_runtime import EstimatorV2, QiskitRuntimeService, SamplerV2
+from qiskit_ibm_runtime.executor_estimator import Estimator as ExecutorEstimator
 from qiskit_ibm_runtime.executor_sampler import Sampler as ExecutorSampler
 
 from localqpu import connect
@@ -61,3 +65,32 @@ def test_connect_does_not_leak_to_network(
     SamplerV2(mode=backend).run([bell_isa_circuit(backend)], shots=10).result(timeout=120)
     assert localqpu_control.health()["blocked_connect_requests"] == 0
     assert [job["status"] for job in localqpu_control.jobs()] == ["Completed"]
+
+
+def bell_observable_pub(backend: object) -> tuple[object, object]:
+    """Bell 회로와 칩 배치에 맞춘 관측량(ZZ, XX, ZI) PUB."""
+    circuit = QuantumCircuit(2)
+    circuit.h(0)
+    circuit.cx(0, 1)
+    isa = generate_preset_pass_manager(backend=backend, optimization_level=1).run(circuit)
+    return isa, [SparsePauliOp(label).apply_layout(isa.layout) for label in ("ZZ", "XX", "ZI")]
+
+
+def test_estimator_v2_bell_expectation_values(localqpu_service: QiskitRuntimeService) -> None:
+    """기존 EstimatorV2로 Bell 상태의 ZZ·XX는 1, ZI는 0이 나온다(정확 계산)."""
+    backend = localqpu_service.backend("ibm_brisbane")
+    result = EstimatorV2(mode=backend).run([bell_observable_pub(backend)]).result(timeout=120)
+    assert result[0].data.evs == pytest.approx([1.0, 1.0, 0.0], abs=1e-9)
+
+
+def test_executor_estimator_bell_expectation_values(localqpu_service: QiskitRuntimeService) -> None:
+    """새 executor 기반 Estimator도 Bell 상태의 기대값을 샘플링 오차 안에서 돌려준다."""
+    backend = localqpu_service.backend("ibm_brisbane")
+    evs = (
+        ExecutorEstimator(mode=backend)
+        .run([bell_observable_pub(backend)])
+        .result(timeout=120)[0]
+        .data.evs
+    )
+    assert evs[0] == pytest.approx(1.0, abs=0.05) and evs[1] == pytest.approx(1.0, abs=0.05)
+    assert abs(evs[2]) < 0.2
