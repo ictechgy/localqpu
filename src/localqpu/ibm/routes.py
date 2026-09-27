@@ -158,16 +158,29 @@ def get_usage(context: AppContext, request: Request, params: dict[str, str]) -> 
 def submit_job(context: AppContext, request: Request, params: dict[str, str]) -> Response:
     """작업 제출. 사용량·백엔드·프로그램을 확인한 뒤 작업 관리자에 등록한다."""
     payload = _require_object(request.json_body())
-    rejection = _reject_submission(context, payload)
+    rejection = _reject_malformed_submission(payload) or _reject_submission(context, payload)
     if rejection is not None:
         return rejection
     try:
         job = context.jobs.submit(
-            str(payload.get("program_id")), str(payload["backend"]), payload.get("params") or {}
+            payload["program_id"], payload["backend"], payload.get("params") or {}
         )
     except UnsupportedProgramError as error:
         return error_response(404, str(error))
     return Response(200, {"id": job.job_id, "backend": job.backend_name})
+
+
+def _reject_malformed_submission(payload: dict[str, Any]) -> Response | None:
+    """필드 타입이 틀린 제출은 400으로 거절한다. 직접 모드 클라이언트의 실수를 500으로 만들지 않기 위함이다."""
+    for field_name in ("program_id", "backend"):
+        if not isinstance(payload.get(field_name), str):
+            return error_response(
+                400,
+                f"제출 본문의 '{field_name}'은(는) 문자열이어야 합니다(받은 값: {payload.get(field_name)!r}).",
+            )
+    if not isinstance(payload.get("params", {}), dict):
+        return error_response(400, "제출 본문의 'params'는 JSON 객체여야 합니다.")
+    return None
 
 
 def _reject_submission(context: AppContext, payload: dict[str, Any]) -> Response | None:
@@ -208,6 +221,7 @@ def get_job_results(context: AppContext, request: Request, params: dict[str, str
         return Response(
             200,
             f"localqpu: job {job.job_id} {job.status.lower()}: {job.reason or 'no reason given'}",
+            content_type="text/plain; charset=utf-8",
         )
     if job.status != "Completed" or job.result_payload is None:
         return error_response(409, f"작업 '{job.job_id}'는 {job.status} 상태라 결과가 없습니다.")

@@ -1,5 +1,6 @@
 """IBM API 라우트 테스트(직접 모드 HTTP)."""
 
+import http.client
 import json
 import time
 from collections.abc import Iterator
@@ -181,5 +182,38 @@ def test_cancel_and_results_conflicts() -> None:
         assert send_direct("GET", f"{job_url}/results")[0] == 409
         assert send_direct("POST", f"{job_url}/cancel")[0] == 204
         assert send_direct("POST", f"{job_url}/cancel")[0] == 409
+    finally:
+        running.stop()
+
+
+@pytest.mark.parametrize(
+    ("override", "expected_field"),
+    [
+        ({"backend": ["ibm_brisbane"]}, "backend"),
+        ({"backend": {"name": "ibm_brisbane"}}, "backend"),
+        ({"program_id": None}, "program_id"),
+        ({"program_id": 7}, "program_id"),
+        ({"params": [1]}, "params"),
+    ],
+)
+def test_malformed_submission_is_400(
+    server: RunningServer, override: dict[str, Any], expected_field: str
+) -> None:
+    """형식이 틀린 제출 본문은 500이나 엉뚱한 404가 아니라 필드 이름을 담은 400이다."""
+    status, body = send_direct(
+        "POST", f"{server.url}/api/v1/jobs", {**sampler_payload(), **override}
+    )
+    assert status == 400 and expected_field in body["errors"][0]["message"]
+
+
+def test_failed_job_results_are_plain_text() -> None:
+    """실패 사유 문자열은 JSON이 아니므로 text/plain으로 보낸다."""
+    running = launch({"next_jobs": [{"outcome": "failed", "reason": "calibrating"}]})
+    try:
+        _, submitted = send_direct("POST", f"{running.url}/api/v1/jobs", sampler_payload())
+        poll_job(running, submitted["id"])
+        connection = http.client.HTTPConnection(running.host, running.port, timeout=5)
+        connection.request("GET", f"/api/v1/jobs/{submitted['id']}/results")
+        assert connection.getresponse().getheader("Content-Type").startswith("text/plain")
     finally:
         running.stop()

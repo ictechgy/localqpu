@@ -7,3 +7,5 @@ __pycache__/
 dist/
 .env
 .env.*
+# 로컬 코드 분석 도구(serena) 캐시
+.serena/

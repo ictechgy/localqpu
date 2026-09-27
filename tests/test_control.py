@@ -80,3 +80,14 @@ def test_start_rejects_unknown_backend_in_scenario() -> None:
     scenario = parse_scenario({"backends": {"ibm_brisbne": {"status": "offline"}}})
     with pytest.raises(ScenarioError, match="ibm_brisbne"):
         start_server(ServerConfig(port=0, scenario=scenario))
+
+
+def test_put_broken_json_is_400_and_keeps_previous(server: RunningServer) -> None:
+    """JSON 문법이 깨진 시나리오 PUT은 위치를 담은 400이고 기존 시나리오는 유지된다."""
+    control = LocalqpuControl(server.url)
+    control.set_scenario({"seed": 7})
+    connection = http.client.HTTPConnection(server.host, server.port, timeout=5)
+    connection.request("PUT", "/_localqpu/scenario", body=b'{"seed": ')
+    response = connection.getresponse()
+    assert response.status == 400 and "column" in response.read().decode()
+    assert control.scenario()["seed"] == 7

@@ -46,6 +46,8 @@ def run_executor_program(params: dict[str, Any], settings: ExecutionSettings) ->
 
 def _decode_program(params: dict[str, Any]) -> Any:
     """스키마 버전을 확인하고 QuantumProgram으로 해석한다."""
+    if not isinstance(params, dict):
+        raise ProgramInputError("executor 입력(params)은 JSON 객체여야 합니다.")
     version = params.get("schema_version")
     if version != SUPPORTED_EXECUTOR_SCHEMA:
         raise ProgramInputError(

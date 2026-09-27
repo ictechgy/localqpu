@@ -32,8 +32,10 @@ def run_bell(service: QiskitRuntimeService, shots: int = 50) -> object:
 def tiny_limit_server() -> Iterator[RunningServer]:
     """정확 시뮬레이션 한도가 1큐비트인 별도 서버(stub·한도 초과 검증용)."""
     server = start_server(ServerConfig(port=0, max_sim_qubits=1))
-    yield server
-    server.stop()
+    try:
+        yield server
+    finally:
+        server.stop()
 
 
 def test_planned_failure_surfaces_reason(

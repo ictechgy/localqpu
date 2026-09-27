@@ -49,15 +49,23 @@ def test_sampler_uses_default_shots_when_pub_has_none() -> None:
 
 
 def test_sampler_rejects_missing_pubs() -> None:
-    """pubs가 없으면 해결 방향을 담은 입력 오류가 난다."""
-    with pytest.raises(ProgramInputError, match="localqpu를 업데이트"):
+    """pubs가 없으면 버전 업데이트가 아니라 입력 구조를 고치라는 안내가 나온다."""
+    with pytest.raises(ProgramInputError, match="pubs") as caught:
         run_sampler_program({"options": {}}, SETTINGS)
+    assert "업데이트" not in str(caught.value)
+
+
+def test_sampler_accepts_null_options() -> None:
+    """options가 null이어도 기본 shots로 실행된다."""
+    params = encode_like_client({"pubs": [(bell_circuit(),)], "options": None})
+    result = json.loads(run_sampler_program(params, SETTINGS).payload, cls=RuntimeDecoder)
+    assert result[0].data.meas.num_shots == 4096
 
 
 def test_sampler_rejects_corrupt_circuit() -> None:
     """QPY가 깨져 있으면 입력 오류가 난다."""
     params = {"pubs": [[{"__type__": "QuantumCircuit", "__value__": "not-base64"}, None, 10]]}
-    with pytest.raises(ProgramInputError):
+    with pytest.raises(ProgramInputError, match="업데이트"):
         run_sampler_program(params, SETTINGS)
 
 
@@ -83,3 +91,9 @@ def test_executor_rejects_malformed_v2_params() -> None:
 def test_registry_includes_executor() -> None:
     """executor가 레지스트리에 등록돼 있다."""
     assert find_program_runner("executor") is run_executor_program
+
+
+def test_executor_rejects_non_object_params() -> None:
+    """params가 객체가 아니면 내부 오류가 아니라 입력 오류다."""
+    with pytest.raises(ProgramInputError, match="JSON 객체"):
+        run_executor_program([1], SETTINGS)  # type: ignore[arg-type]
