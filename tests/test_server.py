@@ -47,6 +47,11 @@ def running() -> Iterator[tuple[RunningServer, ServerStats]]:
     router.add("GET", "/bad", raise_bad_request)
     router.add("GET", "/missing", raise_not_found)
     router.add("GET", "/boom", raise_unexpected)
+    router.add(
+        "GET",
+        "/text",
+        lambda request, params: Response(200, "안녕", content_type="text/plain; charset=utf-8"),
+    )
     stats = ServerStats()
     server = serve(router, stats, "127.0.0.1", 0)
     yield server, stats
@@ -123,3 +128,39 @@ def test_invalid_json_body_is_400(running: tuple[RunningServer, ServerStats]) ->
     connection = http.client.HTTPConnection(server.host, server.port, timeout=5)
     connection.request("POST", "/jobs/abc", body=b"{not json")
     assert connection.getresponse().status == 400
+
+
+@pytest.mark.parametrize("length", ["abc", "-1"])
+def test_invalid_content_length_is_400(
+    running: tuple[RunningServer, ServerStats], length: str
+) -> None:
+    """숫자가 아니거나 음수인 Content-Length는 연결을 끊거나 스레드를 묶지 않고 400으로 답한다."""
+    server, _ = running
+    connection = http.client.HTTPConnection(server.host, server.port, timeout=5)
+    connection.putrequest("POST", "/jobs/abc")
+    connection.putheader("Content-Length", length)
+    connection.endheaders()
+    response = connection.getresponse()
+    assert response.status == 400 and "Content-Length" in response.read().decode()
+
+
+def test_request_log_includes_host(
+    running: tuple[RunningServer, ServerStats], caplog: pytest.LogCaptureFixture
+) -> None:
+    """요청 로그에 호스트가 들어가 프록시 모드에서 어느 가짜 호스트로 온 요청인지 구분된다."""
+    server, _ = running
+    with caplog.at_level(logging.INFO, logger="localqpu.server"):
+        connection = http.client.HTTPConnection(server.host, server.port, timeout=5)
+        connection.request("POST", "http://iam.localqpu.test/jobs/xyz", body=b"{}")
+        connection.getresponse().read()
+    assert "iam.localqpu.test/jobs/xyz" in caplog.text
+
+
+def test_text_response_uses_text_content_type(running: tuple[RunningServer, ServerStats]) -> None:
+    """content_type을 지정한 응답은 그 Content-Type으로 나간다."""
+    server, _ = running
+    connection = http.client.HTTPConnection(server.host, server.port, timeout=5)
+    connection.request("GET", "/text")
+    response = connection.getresponse()
+    assert response.getheader("Content-Type") == "text/plain; charset=utf-8"
+    assert response.read() == "안녕".encode()

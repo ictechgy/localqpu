@@ -221,6 +221,7 @@ def get_job_results(context: AppContext, request: Request, params: dict[str, str
         return Response(
             200,
             f"localqpu: job {job.job_id} {job.status.lower()}: {job.reason or 'no reason given'}",
+            content_type="text/plain; charset=utf-8",
         )
     if job.status != "Completed" or job.result_payload is None:
         return error_response(409, f"작업 '{job.job_id}'는 {job.status} 상태라 결과가 없습니다.")

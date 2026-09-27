@@ -36,12 +36,16 @@ class NotFoundError(LookupError):
 
 @dataclass(frozen=True)
 class Request:
-    """라우터가 다루는 요청. 프록시 형식이어도 path에는 경로만 들어 있다."""
+    """라우터가 다루는 요청. 프록시 형식이어도 path에는 경로만 들어 있다.
+
+    host는 프록시 형식이면 절대 URL의 호스트, 직접 요청이면 Host 헤더다(로그용).
+    """
 
     method: str
     path: str
     query: dict[str, list[str]]
     body: bytes
+    host: str = ""
 
     def json_body(self) -> Any:
         """본문을 JSON으로 읽는다. 빈 본문은 None.
@@ -57,10 +61,14 @@ class Request:
 
 @dataclass(frozen=True)
 class Response:
-    """라우터가 돌려주는 응답. body가 str이면 그대로, None이면 빈 본문, 그 밖에는 JSON으로 보낸다."""
+    """라우터가 돌려주는 응답. body가 str이면 그대로, None이면 빈 본문, 그 밖에는 JSON으로 보낸다.
+
+    content_type은 평문 본문(예: 실패 작업의 사유)을 JSON으로 잘못 표시하지 않도록 바꿀 수 있다.
+    """
 
     status: int
     body: Any = None
+    content_type: str = "application/json"
 
     def encode(self) -> bytes:
         """전송할 바이트열."""
@@ -204,8 +212,13 @@ def _make_handler_class(
         """요청 하나를 Request로 바꿔 라우터에 넘긴다."""
 
         def _handle(self) -> None:
-            """일반 메서드 공통 처리."""
-            request = _parse_request(self)
+            """일반 메서드 공통 처리. 헤더가 잘못된 요청은 라우터에 넘기지 않고 400으로 답한다."""
+            try:
+                request = _parse_request(self)
+            except BadRequestError as error:
+                _write_response(self, error_response(400, str(error)))
+                logger.info("400 %s %s (잘못된 요청 헤더: %s)", self.command, self.path, error)
+                return
             response = router.dispatch(request)
             _write_response(self, response)
             _log_request(request, response, is_verbose)
@@ -227,20 +240,40 @@ def _make_handler_class(
 
 
 def _parse_request(handler: BaseHTTPRequestHandler) -> Request:
-    """표준 라이브러리 핸들러에서 Request를 만든다."""
+    """표준 라이브러리 핸들러에서 Request를 만든다.
+
+    Raises:
+        BadRequestError: Content-Length가 숫자가 아니거나 음수일 때.
+    """
     url = urlsplit(handler.path)
-    size = int(handler.headers.get("Content-Length") or 0)
-    body = handler.rfile.read(size) if size else b""
+    body = _read_body(handler)
+    host = url.netloc or handler.headers.get("Host", "")
     return Request(
-        method=handler.command, path=url.path or "/", query=parse_qs(url.query), body=body
+        method=handler.command,
+        path=url.path or "/",
+        query=parse_qs(url.query),
+        body=body,
+        host=host,
     )
 
 
+def _read_body(handler: BaseHTTPRequestHandler) -> bytes:
+    """Content-Length만큼 본문을 읽는다. 음수로 read(-1)하면 연결이 끊길 때까지 스레드가 묶이므로 막는다."""
+    raw_length = handler.headers.get("Content-Length") or "0"
+    try:
+        size = int(raw_length)
+    except ValueError as error:
+        raise BadRequestError(f"Content-Length 헤더가 숫자가 아닙니다: {raw_length!r}") from error
+    if size < 0:
+        raise BadRequestError(f"Content-Length 헤더는 0 이상이어야 합니다: {size}")
+    return handler.rfile.read(size) if size else b""
+
+
 def _write_response(handler: BaseHTTPRequestHandler, response: Response) -> None:
-    """응답을 JSON 헤더와 함께 쓴다."""
+    """응답을 Content-Type·Content-Length 헤더와 함께 쓴다."""
     payload = response.encode()
     handler.send_response(response.status)
-    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Type", response.content_type)
     handler.send_header("Content-Length", str(len(payload)))
     handler.end_headers()
     handler.wfile.write(payload)
@@ -252,6 +285,6 @@ _CREDENTIAL_BODY_PATHS: frozenset[str] = frozenset({"/identity/token"})
 
 def _log_request(request: Request, response: Response, is_verbose: bool) -> None:
     """요청 한 줄 로그. verbose면 본문 앞부분도 남기되, 자격 증명이 든 본문은 남기지 않는다."""
-    logger.info("%s %s %s", response.status, request.method, request.path)
+    logger.info("%s %s %s%s", response.status, request.method, request.host, request.path)
     if is_verbose and request.body and request.path not in _CREDENTIAL_BODY_PATHS:
         logger.debug("  body: %s", request.body[:300].decode(errors="replace"))

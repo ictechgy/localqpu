@@ -1,5 +1,6 @@
 """IBM API 라우트 테스트(직접 모드 HTTP)."""
 
+import http.client
 import json
 import time
 from collections.abc import Iterator
@@ -203,3 +204,16 @@ def test_malformed_submission_is_400(
         "POST", f"{server.url}/api/v1/jobs", {**sampler_payload(), **override}
     )
     assert status == 400 and expected_field in body["errors"][0]["message"]
+
+
+def test_failed_job_results_are_plain_text() -> None:
+    """실패 사유 문자열은 JSON이 아니므로 text/plain으로 보낸다."""
+    running = launch({"next_jobs": [{"outcome": "failed", "reason": "calibrating"}]})
+    try:
+        _, submitted = send_direct("POST", f"{running.url}/api/v1/jobs", sampler_payload())
+        poll_job(running, submitted["id"])
+        connection = http.client.HTTPConnection(running.host, running.port, timeout=5)
+        connection.request("GET", f"/api/v1/jobs/{submitted['id']}/results")
+        assert connection.getresponse().getheader("Content-Type").startswith("text/plain")
+    finally:
+        running.stop()
