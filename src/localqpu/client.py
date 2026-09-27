@@ -20,7 +20,7 @@ def connect(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST) -> QiskitRuntime
     """
     proxy_url = f"http://{host}:{port}"
     os.environ["IAM_URL"] = f"http://iam.{FAKE_CLOUD_HOST}"
-    _bypass_environment_proxies(FAKE_CLOUD_HOST)
+    bypass_environment_proxies(FAKE_CLOUD_HOST)
     return QiskitRuntimeService(
         channel="ibm_quantum_platform",
         token="localqpu",
@@ -31,7 +31,7 @@ def connect(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST) -> QiskitRuntime
     )
 
 
-def _bypass_environment_proxies(host: str) -> None:
+def bypass_environment_proxies(host: str) -> None:
     """NO_PROXY·no_proxy에 가짜 호스트를 더해, 환경 프록시가 localqpu 대신 쓰이지 않게 한다.
 
     Qiskit은 프록시를 세션(session.proxies)에만 두는데, requests는 환경 프록시(HTTP_PROXY 등)를

@@ -96,8 +96,12 @@ class Router:
         self._routes: list[tuple[str, re.Pattern[str], Handler]] = []
 
     def add(self, method: str, pattern: str, handler: Handler) -> None:
-        """라우트를 등록한다. 예: add("GET", "/api/v1/jobs/{job_id}", handler)."""
-        regex = re.compile("^" + re.sub(r"\{(\w+)\}", r"(?P<\1>[^/]+)", pattern) + "$")
+        """라우트를 등록한다. 예: add("GET", "/api/v1/jobs/{job_id}", handler).
+
+        {name}은 경로 조각 하나, {name+}는 슬래시를 포함한 나머지 경로 전체와 맞는다(S3 객체 키용).
+        """
+        greedy = re.sub(r"\{(\w+)\+\}", r"(?P<\1>.+)", pattern)
+        regex = re.compile("^" + re.sub(r"\{(\w+)\}", r"(?P<\1>[^/]+)", greedy) + "$")
         self._routes.append((method, regex, handler))
 
     def dispatch(self, request: Request) -> Response:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from localqpu.aws.routes import register_aws_routes
 from localqpu.context import AppContext, ServerConfig
 from localqpu.control import register_control_routes
 from localqpu.ibm.backends import BackendCatalog
@@ -39,6 +40,7 @@ def build_router(context: AppContext) -> Router:
     register_ibm_routes(router, context)
     register_session_routes(router, context)
     register_control_routes(router, context)
+    register_aws_routes(router, context)
     return router
 
 

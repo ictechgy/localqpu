@@ -310,3 +310,27 @@ def test_noise_scenario_sets_noise_backend_at_submission() -> None:
     manager = make_manager(parse_scenario({"noise": True}))
     assert manager.submit("sampler", "ibm_brisbane", {}).settings.noise_backend == "ibm_brisbane"
     assert make_manager().submit("sampler", "ibm_brisbane", {}).settings.noise_backend is None
+
+
+def test_caller_chosen_job_id_and_metadata_are_kept() -> None:
+    """호출자가 정한 작업 ID와 메타데이터를 쓰고, 메타데이터는 대기열을 벗어나도 남는다."""
+    manager = make_manager()
+    job = manager.submit(
+        "sampler", "sv1", {"big": 1}, job_id="localqpu-fixed", metadata={"output_bucket": "b"}
+    )
+    finished = poll_until_final(manager, "localqpu-fixed")
+    assert job.job_id == "localqpu-fixed" and finished.metadata == {"output_bucket": "b"}
+    assert finished.params == {} and finished.ended_at is not None
+
+
+def test_ended_at_is_set_for_every_final_status() -> None:
+    """완료·실패·취소 모두 종료 시각이 남고, 끝나기 전에는 없다."""
+    manager = make_manager(
+        parse_scenario({"next_jobs": [{"outcome": "failed"}], "queue": {"polls_before_running": 1}})
+    )
+    failed = poll_until_final(manager, manager.submit("sampler", "ibm_brisbane", {}).job_id)
+    completed = poll_until_final(manager, manager.submit("sampler", "ibm_brisbane", {}).job_id)
+    waiting = manager.submit("sampler", "ibm_brisbane", {})
+    assert manager.get(waiting.job_id).ended_at is None
+    manager.cancel(waiting.job_id)
+    assert failed.ended_at and completed.ended_at and manager.get(waiting.job_id).ended_at

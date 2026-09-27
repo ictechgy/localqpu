@@ -164,3 +164,17 @@ def test_text_response_uses_text_content_type(running: tuple[RunningServer, Serv
     response = connection.getresponse()
     assert response.getheader("Content-Type") == "text/plain; charset=utf-8"
     assert response.read() == "안녕".encode()
+
+
+def test_greedy_path_parameter_matches_slashes() -> None:
+    """{name+} 경로 파라미터는 슬래시를 포함한 나머지 경로 전체와 맞는다(S3 객체 키용)."""
+    router = Router()
+    router.add(
+        "GET", "/amazon-braket-{suffix}/{key+}", lambda request, params: Response(200, params)
+    )
+    response = router.dispatch(
+        Request("GET", "/amazon-braket-localqpu/tasks/abc/results.json", {}, b"")
+    )
+    assert response.status == 200
+    assert response.body == {"suffix": "localqpu", "key": "tasks/abc/results.json"}
+    assert router.dispatch(Request("GET", "/amazon-braket-localqpu", {}, b"")).status == 501
