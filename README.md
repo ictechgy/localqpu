@@ -137,7 +137,7 @@ All of them also work inside `Session(...)` and `Batch(...)`.
 
 ## Simulation size
 
-Circuits arrive laid out on the full chip (e.g. 127 qubits), but what makes simulation expensive is entanglement, not width. localqpu therefore limits the number of **entangled qubits** — qubits touched by multi-qubit gates — with `--max-sim-qubits` (default 24), and simulates exactly with Aer's matrix-product-state method, which is cheap for qubits that only get single-qubit gates or measurements. Above the limit, `sampler` and `estimator` return a shape-correct stub result (`metadata["localqpu_stub"]`) and `executor` fails with guidance.
+Circuits arrive laid out on the full chip (e.g. 127 qubits), but what makes simulation expensive is entanglement, not width. localqpu therefore limits the number of **entangled qubits** — qubits touched by multi-qubit gates — with `--max-sim-qubits` (default 24), and simulates exactly with Aer's matrix-product-state method, which is cheap for qubits that only get single-qubit gates or measurements. Above the limit you get a stub instead of an error: `sampler` and `estimator` return shape-correct random values (`metadata["localqpu_stub"]`), and `executor` runs an approximate simulation with a capped MPS bond dimension, so the result structure is exact but the values are not meaningful. Stub jobs are flagged with `is_stub: true` in `GET /_localqpu/jobs` and logged by the server.
 
 ## Limitations
 
