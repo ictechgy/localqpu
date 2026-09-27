@@ -1,0 +1,49 @@
+# v* 태그를 푸시하면 검사 → 빌드 → PyPI 게시를 한다.
+# PyPI Trusted Publishing(OIDC)을 쓰므로 API 토큰을 저장소에 두지 않는다.
+# PyPI 쪽 pending publisher 설정: owner=ictechgy, repository=localqpu, workflow=release.yml, environment=pypi
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: 태그와 pyproject 버전이 같은지 확인
+        run: |
+          version=$(uv run --no-project --python 3.12 python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "태그(${GITHUB_REF_NAME})와 pyproject 버전(v${version})이 다릅니다. pyproject.toml의 version을 맞춘 뒤 다시 태그하세요."
+            exit 1
+          fi
+      - name: 의존성 설치
+        run: uv sync --python 3.12
+      - run: uv run --no-sync ruff check .
+      - run: uv run --no-sync ruff format --check .
+      - run: uv run --no-sync mypy
+      - run: uv run --no-sync pytest -q
+      - name: 배포물 빌드
+        run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # PyPI pending publisher의 environment 이름과 같아야 한다.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/localqpu/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

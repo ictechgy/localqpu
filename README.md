@@ -7,10 +7,8 @@ Like a payment provider's "test mode", it lets you test code that calls a quantu
 
 ## Install and run
 
-localqpu is **not published on PyPI yet** — do not `pip install localqpu`, since that name could be registered by someone else. Install from a clone of this repository:
-
 ```bash
-pip install .             # run inside the cloned repository
+pip install localqpu      # https://pypi.org/project/localqpu/
 localqpu start            # http://127.0.0.1:8787
 # or
 docker build -t localqpu . && docker run -p 127.0.0.1:8787:8787 localqpu
