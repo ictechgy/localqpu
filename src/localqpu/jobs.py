@@ -76,6 +76,8 @@ class JobRecord:
     is_stub: bool = False
     entangled_qubits: int | None = None
     session_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    ended_at: str | None = None
     future: Future[ProgramOutput] | None = field(default=None, repr=False, compare=False)
 
     @property
@@ -111,6 +113,8 @@ class JobManager:
         backend_name: str,
         params: dict[str, Any],
         session_id: str | None = None,
+        job_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> JobRecord:
         """작업을 등록한다. 결말과 시드는 제출 순서대로 정해져 재현 가능하다.
 
@@ -121,7 +125,7 @@ class JobManager:
         # 결말 소비·시드 파생·등록을 한 잠금 안에서 해 reset과 섞이지 않게 한다.
         with self._lock:
             job = JobRecord(
-                job_id=f"localqpu-{uuid.uuid4().hex[:12]}",
+                job_id=job_id or f"localqpu-{uuid.uuid4().hex[:12]}",
                 program_id=program_id,
                 backend_name=backend_name,
                 params=params,
@@ -134,6 +138,7 @@ class JobManager:
                 submitted_at=self._clock(),
                 created=utc_now_iso(),
                 session_id=session_id,
+                metadata=dict(metadata or {}),
             )
             self._jobs[job.job_id] = job
             return dataclasses.replace(job)
@@ -197,6 +202,7 @@ class JobManager:
             LOCALQPU_CANCEL_CODE,
         )
         job.params = {}
+        job.ended_at = utc_now_iso()
 
     def reset(self) -> None:
         """작업 기록을 지우고 시나리오를 처음 상태로 되돌린다.
@@ -253,11 +259,13 @@ class JobManager:
         if job.planned.outcome == "failed":
             reason = job.planned.reason or _DEFAULT_PLANNED_FAILURE_REASON
             job.status, job.reason, job.reason_code = "Failed", reason, job.planned.reason_code
+            job.ended_at = utc_now_iso()
             return
         if job.planned.outcome == "cancelled":
             # 클라이언트는 reason이 있을 때만 reason_code를 저장하므로(base_runtime_job.py) 사유를 항상 채운다.
             reason = job.planned.reason or _DEFAULT_PLANNED_CANCEL_REASON
             job.status, job.reason, job.reason_code = "Cancelled", reason, job.planned.reason_code
+            job.ended_at = utc_now_iso()
             return
         job.status = "Running"
         job.future = self._pool.submit(self._runner_lookup(job.program_id), params, job.settings)
@@ -278,6 +286,7 @@ class JobManager:
             )
         else:
             job.status, job.result_payload = "Completed", output.payload
+            job.ended_at = utc_now_iso()
             job.is_stub, job.entangled_qubits = output.is_stub, output.entangled_qubits
             if output.is_stub:
                 logger.warning(
@@ -290,3 +299,4 @@ class JobManager:
     def _fail(self, job: JobRecord, reason: str) -> None:
         """localqpu 사유 코드로 작업을 실패시킨다."""
         job.status, job.reason, job.reason_code = "Failed", reason, LOCALQPU_ERROR_CODE
+        job.ended_at = utc_now_iso()
