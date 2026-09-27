@@ -46,7 +46,7 @@
 
 ### v0.1에서 제외 (다음 버전 후보)
 - AWS Braket 등 타사 API
-- 노이즈 흉내 (v0.2: qiskit-aer + 칩 스냅샷의 보정값)
+- 노이즈 흉내 (v0.2: 칩 스냅샷의 보정값 활용. qiskit-aer 자체는 executor 실행 때문에 v0.1부터 의존성)
 - Estimator (기존·executor 둘 다)
 - Session/Batch 모드
 - Qiskit Functions, 펄스 수준 제어
@@ -70,7 +70,7 @@ Qiskit 클라이언트 ──HTTP 프록시──▶ [HTTP 서버] ─▶ [라�
 - 기본 포트 8787.
 
 ### 5.2 라우터 (`localqpu/server/router.py`)
-- (메서드, 경로)로 핸들러를 찾는다. 프록시 모드일 때는 호스트로 서비스를 구분한다(`iam.*`, `api.global-search-tagging.*`, `globalcatalog.*`, 그 외는 런타임 API).
+- (메서드, 경로)만으로 핸들러를 찾는다. 인증(`/identity/token`), 검색(`/v3/resources/search`), 카탈로그(`/api/v1/localqpu-plan`), 런타임(`/api/v1/backends` 등) 경로가 서로 겹치지 않으므로 호스트는 보지 않는다. 덕분에 프록시 모드와 직접 모드가 같은 라우팅을 쓴다.
 - 처리하지 않는 경로는 **501**과 함께 `"localqpu는 아직 GET /x를 흉내 내지 않습니다. 이슈로 알려주세요"`를 돌려준다. 조용히 실패하지 않는다.
 - HTTPS `CONNECT` 요청은 **405**와 함께 `"클라이언트가 실제 IBM(HTTPS)으로 나가려 합니다. localqpu.connect()를 쓰거나 IAM_URL을 설정하세요"`를 돌려준다. 설정 누락으로 인한 키 유출 시도를 드러내기 위함이다.
 
@@ -105,12 +105,14 @@ PoC에서 검증한 엔드포인트:
 `program_id`마다 하나씩 둔다. 새 프로그램 형식은 파일 하나를 추가해 지원한다.
 
 - **sampler** (기존 SamplerV2): `RuntimeDecoder`로 입력을 해석하고 → 시뮬레이션 → `RuntimeEncoder`로 `PrimitiveResult`를 인코딩한다. PoC에서 검증했다.
-- **executor** (새 Sampler, 스키마 v2.0): 클라이언트 패키지의 `quantum_program_from_2_0`으로 입력을 해석한다. 실행은 qiskit-ibm-runtime 로컬 테스트 모드의 `run_quantum_program` 재사용을 1순위로 한다. 결과는 `ibm_quantum_schemas`의 v2.0 결과 모델로 직접 구성한다. 클라이언트 패키지에는 결과를 해석하는 방향(`quantum_program_result_from_2_0`)만 있어서, 역방향 변환은 localqpu가 구현해야 한다(확인됨). **구현 계획의 첫 작업은 이 경로가 실제로 되는지 확인하는 스파이크다.** `run_quantum_program`을 재사용할 수 없으면 시뮬레이션 엔진으로 직접 실행한다.
+- **executor** (새 Sampler, 스키마 v2.0): 클라이언트 패키지의 `quantum_program_from_2_0`으로 입력을 해석하고, qiskit-ibm-runtime 로컬 테스트 모드의 `run_quantum_program`을 `AerSimulator()`(노이즈 없음)로 실행한다. 결과는 `ibm_quantum_schemas`의 v2.0 결과 모델(`CompressedTensorModel.from_numpy`)로 직접 구성한다. 클라이언트 패키지에는 결과를 해석하는 방향만 있어서 역방향은 localqpu가 구현한다. **2026-09-27 스파이크로 이 경로 전체를 검증했다**(executor Sampler Bell 회로 → `{'00': 515, '11': 485}`). 주의: 옵션 클래스는 `options_models.simulator.SimulatorOptions`이고 `seed_simulator`에 정수가 반드시 필요하다.
+- 지원하지 않는 `program_id`(예: estimator)는 작업 제출 시 404로 거절한다. 클라이언트는 이를 `RuntimeProgramNotFound`로 보여준다.
 
 ### 5.6 시뮬레이션 엔진 (`localqpu/simulation/`)
 - 칩 배치가 끝난 회로(예: 127큐비트 폭)에서 **실제로 쓰인 큐비트만 남긴다**. PoC에서 이것 없이는 메모리 한계로 실패했다.
 - 쓰인 큐비트가 `--max-sim-qubits`(기본 24) 이하이면 `StatevectorSampler`로 정확히 계산한다.
-- 초과하면 **stub 모드**로 전환한다. 결과 형태(비트 수, shots, 레지스터 이름)만 맞춘 균등 무작위 비트열을 돌려주고, 서버 로그와 결과 메타데이터에 stub이었다는 사실을 남긴다.
+- 초과하면 **stub 모드**로 전환한다(sampler 한정). 결과 형태(비트 수, shots, 레지스터 이름)만 맞춘 균등 무작위 비트열을 돌려주고, 서버 로그와 결과 메타데이터에 stub이었다는 사실을 남긴다.
+- executor는 v0.1에서 stub 모드를 지원하지 않는다. 한도를 넘으면 작업을 `Failed`로 두고 사유에 `--max-sim-qubits`를 올리라는 안내를 적는다(결과 구조가 samplex 출력에 따라 달라 형태만 맞춘 stub을 만들기 어렵기 때문).
 - 시나리오에 `seed`가 있으면 모든 무작위성(샘플링, stub, 실패 확률)에 적용한다.
 
 ### 5.7 시나리오 (`localqpu/scenario/`)
@@ -131,9 +133,13 @@ JSON 파일(`--scenario`)이나 제어 API로 설정한다. 모든 필드는 선
 }
 ```
 
-- `next_jobs`는 큐처럼 앞에서부터 하나씩 소비된다. 비어 있으면 `failures.rate`를 적용한다.
+- `next_jobs`는 큐처럼 앞에서부터 하나씩 소비된다. 비어 있으면 `failures.rate`를 적용한다. 결말은 제출 시점에 정해지고, 대기열을 벗어날 때 적용된다.
+- 백엔드 `offline`: 목록에서 `online`이 아니므로 `least_busy()`에서 빠진다. 이미 제출된 작업은 백엔드가 다시 온라인이 될 때까지 `Queued`에 머문다.
+- 백엔드 `paused`: 작업은 정상 처리되고, 클라이언트는 "currently has a status of paused" 경고를 낸다.
+- 사용량 초과: 사용량 응답에 `usage_limit_reached: true`를 넣고(클라이언트는 경고만 냄), 서버가 `POST /jobs`를 403으로 거절한다(클라이언트는 `IBMRuntimeError`).
 - `reason_code` 값은 그대로 전달만 한다. localqpu는 IBM 에러 코드의 의미를 해석하지 않는다.
-- 주의: 클라이언트는 `Cancelled` + `reason_code: 1305` 조합을 `ERROR`로 바꿔 취급한다(`runtime_job_v2.py`에서 확인). 이 조합도 그대로 재현되므로 README의 시나리오 예시에 적어 둔다.
+- 주의: 클라이언트는 `Cancelled` + `reason_code: 1305` 조합을 `ERROR`로 바꿔 취급하고, `ERROR` + 1305는 `RuntimeJobMaxTimeoutError`로 올린다(`runtime_job_v2.py`에서 확인). README의 시나리오 예시에 적어 둔다.
+- 이미 끝난 작업을 취소하면 409를 돌려준다(클라이언트는 `RuntimeInvalidStateError`).
 
 ### 5.8 제어 API (`/_localqpu/...`)
 테스트 코드가 서버 상태를 바꾸고 검사하는 용도이며, 직접 모드와 프록시 모드 모두에서 접근할 수 있다.
@@ -144,16 +150,16 @@ JSON 파일(`--scenario`)이나 제어 API로 설정한다. 모든 필드는 선
 | `PUT /_localqpu/scenario` | 시나리오 교체 |
 | `POST /_localqpu/reset` | 작업 기록과 시나리오 초기화 |
 | `GET /_localqpu/jobs` | 제출된 작업 목록 (프로그램, 백엔드, 큐비트 수, 결과 종류). 테스트 단언용 |
-| `GET /_localqpu/health` | 상태 확인 |
+| `GET /_localqpu/health` | 상태 확인. 막힌 `CONNECT` 요청 수(`blocked_connect_requests`)를 포함 |
 
 ### 5.9 연결 도우미와 pytest 플러그인 (`localqpu/client.py`, `localqpu/pytest_plugin.py`)
 - `localqpu.connect(port=8787, host="127.0.0.1") -> QiskitRuntimeService`
-  - `url`, `url_resolver`, `proxies`, `token`, `instance`를 localqpu용으로 채운다.
+  - `url`, `url_resolver`, `proxies`, `token`, `instance`를 localqpu용으로 채운다. 프록시는 `http`와 `https` 모두 localqpu로 지정한다. 그래야 설정 누락으로 HTTPS 외부 요청이 생겨도 인터넷으로 직접 나가지 않고 localqpu에 `CONNECT`로 도착해 405로 막히고 집계된다.
   - PoC에서 찾은 함정 대응: 런타임 인증은 `iam.cloud.ibm.com`이 코드에 고정돼 있어 `IAM_URL` 환경변수로만 바뀐다. 이 값을 설정하지 않으면 클라이언트가 **실제 IBM으로 키를 보낸다.** 그래서 `connect()`가 프로세스 환경변수 `IAM_URL`을 설정한다. 프로세스 전체에 영향이 있으므로 문서에 명시한다.
 - pytest 플러그인 fixture
   - `localqpu_server`: 빈 포트에서 서버를 스레드로 띄운다(세션 범위).
   - `localqpu_service`: 연결된 `QiskitRuntimeService`.
-  - `localqpu_scenario`: 시나리오 설정 도우미. 테스트마다 초기화된다.
+  - `localqpu_control`: 시나리오 변경·작업 조회·초기화를 하는 제어 클라이언트. 테스트마다 초기화된다.
 
 ### 5.10 CLI와 배포
 - `localqpu start [--host] [--port] [--scenario FILE] [--backends a,b] [--max-sim-qubits N] [--verbose]`
