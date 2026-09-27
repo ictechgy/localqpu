@@ -93,13 +93,16 @@ Use `localqpu start --scenario scenario.json` or `localqpu_control.set_scenario(
 | `EstimatorV2` (legacy) | `estimator` | Exact expectation values when no precision is requested; with a precision, Aer adds Gaussian noise of that size |
 | `executor_estimator.Estimator` | `executor` (schema v2.0) | Expectation values are computed by the client from sampled measurements |
 
+All of them also work inside `Session(...)` and `Batch(...)`.
+
 ## Simulation size
 
 Circuits arrive laid out on the full chip (e.g. 127 qubits), but what makes simulation expensive is entanglement, not width. localqpu therefore limits the number of **entangled qubits** — qubits touched by multi-qubit gates — with `--max-sim-qubits` (default 24), and simulates exactly with Aer's matrix-product-state method, which is cheap for qubits that only get single-qubit gates or measurements. Above the limit, `sampler` and `estimator` return a shape-correct stub result (`metadata["localqpu_stub"]`) and `executor` fails with guidance.
 
 ## Limitations
 
-- IBM Quantum Platform only. Session/Batch mode and Qiskit Functions are not supported yet.
+- IBM Quantum Platform only. Qiskit Functions are not supported yet.
+- `Session` and `Batch` are supported (create, status, `close()`, `cancel()`, `from_id`), but session timeouts (`max_time`, interactive timeout) are not emulated.
 - Noiseless simulation.
 - Jobs are kept in memory only and are lost when the server restarts.
 - A running simulation cannot be interrupted. `POST /_localqpu/reset` (used by the pytest fixtures between tests) discards its result and starts a fresh worker pool, so later jobs are not blocked, but the old computation keeps using CPU until it finishes.
