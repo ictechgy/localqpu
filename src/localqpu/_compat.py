@@ -6,8 +6,10 @@ SDK가 바뀌면 이 파일만 고치면 되도록, 다른 모듈은 이 심볼�
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+import qiskit_ibm_runtime.fake_provider as _fake_provider_package
 from ibm_quantum_schemas.common.tensor import CompressedTensorModel
 from ibm_quantum_schemas.executor.version_2_0.models import (
     ItemMetadataModel,
@@ -24,6 +26,9 @@ from qiskit_ibm_runtime.quantum_program.converters.converters_2_0 import (
     quantum_program_from_2_0,
 )
 
+#: qiskit-ibm-runtime가 함께 배포하는 실제 칩 스냅샷(conf_*.json, props_*.json) 폴더.
+FAKE_PROVIDER_BACKENDS_DIR: Path = Path(_fake_provider_package.__file__).parent / "backends"
+
 
 def semantic_role_of(program: Any) -> str | None:
     """QuantumProgram의 semantic_role. 클라이언트가 비공개 속성에 두므로 여기서만 읽는다."""
@@ -31,6 +36,7 @@ def semantic_role_of(program: Any) -> str | None:
 
 
 __all__ = [
+    "FAKE_PROVIDER_BACKENDS_DIR",
     "CompressedTensorModel",
     "ExecutorParamsModel",
     "ItemMetadataModel",
