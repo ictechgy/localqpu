@@ -30,25 +30,32 @@ from localqpu.noise import aer_backend_options
 from localqpu.programs.base import ExecutionSettings, ProgramInputError, ProgramOutput
 from localqpu.simulation import count_entangled_qubits
 
+#: 한도를 넘는 작업의 근사(stub) 계산 옵션. MPS 결합 차원을 제한하면 얽힘이 많아도 비용이 제한된다
+#: (40큐비트·12층 회로가 0.02초, 2026-09-27 실측). 값은 근사라 의미 있는 결과로 쓰면 안 된다.
+STUB_BACKEND_OPTIONS: dict[str, int] = {"matrix_product_state_max_bond_dimension": 8}
+
 #: 지원하는 executor 입력 스키마 버전(qiskit-ibm-runtime 0.50의 기본값).
 SUPPORTED_EXECUTOR_SCHEMA: str = "v2.0"
 
 
 def run_executor_program(params: dict[str, Any], settings: ExecutionSettings) -> ProgramOutput:
-    """executor 입력을 노이즈 없는 Aer MPS 시뮬레이터로 실행하고 v2.0 결과 JSON을 돌려준다.
+    """executor 입력을 Aer MPS 시뮬레이터로 실행하고 v2.0 결과 JSON을 돌려준다.
 
     executor 회로는 칩 전체 폭으로 오고(Estimator는 관측량 측정을 칩 전체에 붙인다) samplex 구조
-    때문에 큐비트를 걸러낼 수 없으므로, 폭에 강한 MPS로 그대로 계산한다.
+    때문에 큐비트를 걸러낼 수 없으므로, 폭에 강한 MPS로 그대로 계산한다. 얽힌 큐비트가 한도를
+    넘으면 결합 차원을 제한한 근사 계산(stub)으로 실행한다. 결과 구조는 실행기가 만들어 항상
+    정확하고, 값만 근사다(v0.2 설계서 7절).
     """
     program = _decode_program(params)
     entangled_qubits = count_entangled_qubits(item.circuit for item in program.items)
-    _ensure_within_limit(entangled_qubits, settings.max_sim_qubits)
+    is_stub = entangled_qubits > settings.max_sim_qubits
+    backend_options = aer_backend_options(settings.noise_backend)
+    if is_stub:
+        backend_options.update(STUB_BACKEND_OPTIONS)
     options = SimulatorOptions(seed_simulator=_resolve_seed(settings.seed))
-    result = run_quantum_program(
-        AerSimulator(**aer_backend_options(settings.noise_backend)), program, options
-    )
+    result = run_quantum_program(AerSimulator(**backend_options), program, options)
     return ProgramOutput(
-        payload=_encode_result(program, result), is_stub=False, entangled_qubits=entangled_qubits
+        payload=_encode_result(program, result), is_stub=is_stub, entangled_qubits=entangled_qubits
     )
 
 
@@ -71,15 +78,6 @@ def _decode_program(params: dict[str, Any]) -> Any:
             f"executor 입력을 해석하지 못했습니다({type(error).__name__}: {error})."
         ) from error
     return program
-
-
-def _ensure_within_limit(entangled_qubits: int, limit: int) -> None:
-    """얽힌 큐비트가 한도를 넘으면 실패시킨다. executor는 아직 stub을 지원하지 않는다."""
-    if entangled_qubits > limit:
-        raise ProgramInputError(
-            f"얽힌 큐비트 {entangled_qubits}개가 --max-sim-qubits({limit})를 넘습니다. "
-            "executor는 v0.1에서 stub 모드를 지원하지 않으니 한도를 올리거나 회로를 줄이세요."
-        )
 
 
 def _resolve_seed(seed: int | None) -> int:
