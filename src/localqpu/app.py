@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from localqpu.context import AppContext, ServerConfig
+from localqpu.control import register_control_routes
 from localqpu.ibm.backends import BackendCatalog
 from localqpu.ibm.routes import register_ibm_routes
 from localqpu.jobs import JobManager
@@ -30,6 +31,7 @@ def build_router(context: AppContext) -> Router:
     """모든 라우트를 등록한 라우터."""
     router = Router()
     register_ibm_routes(router, context)
+    register_control_routes(router, context)
     return router
 
 
