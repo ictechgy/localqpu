@@ -11,6 +11,9 @@ dependencies = [
     "PyJWT>=2.8",
 ]
 
+[project.scripts]
+localqpu = "localqpu.cli:main"
+
 [project.entry-points.pytest11]
 localqpu = "localqpu.pytest_plugin"
 
