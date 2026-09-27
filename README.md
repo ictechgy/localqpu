@@ -68,7 +68,8 @@ Use `localqpu start --scenario scenario.json` or `localqpu_control.set_scenario(
 |---|---|
 | `next_jobs` failure | `RuntimeJobFailureError` (with the reason) |
 | `next_jobs` cancellation | `RuntimeInvalidStateError` |
-| Failure with `reason_code: 1305` | `RuntimeJobMaxTimeoutError` (the client treats 1305 as a max-time error) |
+| Failure **or cancellation** with `reason_code: 1305` | `RuntimeJobMaxTimeoutError` (the client treats 1305 as a max-time error and turns a cancelled job with this code into an error) |
+| `job.cancel()` from your code | `CANCELLED`; localqpu records `reason_code: 9001` |
 | Backend `offline` | Excluded from `least_busy()`; submitted jobs stay `QUEUED` until it is back online |
 | Backend `paused` | A "currently has a status of paused" warning, then normal processing |
 | Usage limit reached | A warning, then submission fails with `IBMRuntimeError` (403) |
@@ -91,3 +92,5 @@ Use `localqpu start --scenario scenario.json` or `localqpu_control.set_scenario(
 - Noiseless simulation. If the number of active qubits exceeds `--max-sim-qubits` (default 24), the sampler returns a shape-correct stub result (`metadata["localqpu_stub"]`) and the executor fails with guidance.
 - Estimator, Session/Batch, and Qiskit Functions are not supported yet.
 - Jobs are kept in memory only and are lost when the server restarts.
+- A running simulation cannot be interrupted. `POST /_localqpu/reset` (used by the pytest fixtures between tests) discards its result and starts a fresh worker pool, so later jobs are not blocked, but the old computation keeps using CPU until it finishes.
+- Failure reasons use localqpu codes: `9000` for localqpu-side failures (invalid input, simulation limits) and `9001` for user cancellation.
