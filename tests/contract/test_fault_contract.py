@@ -145,12 +145,19 @@ def test_sampler_stub_over_limit(tiny_limit_server: RunningServer) -> None:
     assert result[0].data.meas.num_shots == 64
 
 
-def test_executor_over_limit_fails_with_guidance(tiny_limit_server: RunningServer) -> None:
-    """한도를 넘는 executor 작업은 --max-sim-qubits 안내와 함께 실패한다."""
+def test_executor_over_limit_returns_marked_stub(tiny_limit_server: RunningServer) -> None:
+    """한도를 넘는 executor 작업은 실패하지 않고, 결합 차원을 제한한 근사(stub) 결과를 받는다.
+
+    결과 형태(shots, 비트 수)는 정확하고, 제어 API 작업 요약에 is_stub으로 표시된다.
+    """
     service = connect(port=tiny_limit_server.port, host=tiny_limit_server.host)
     backend = service.backend("ibm_brisbane")
-    with pytest.raises(RuntimeJobFailureError, match="max-sim-qubits"):
-        ExecutorSampler(mode=backend).run([bell_isa_circuit(backend)]).result(timeout=60)
+    sampler = ExecutorSampler(mode=backend)
+    sampler.options.default_shots = 64
+    bit_array = sampler.run([bell_isa_circuit(backend)]).result(timeout=60)[0].data.meas
+    assert bit_array.num_shots == 64 and bit_array.num_bits == 2
+    summary = LocalqpuControl(tiny_limit_server.url).jobs()[-1]
+    assert summary["is_stub"] is True and summary["status"] == "Completed"
 
 
 def test_noise_scenario_adds_errors_for_both_samplers(
@@ -171,3 +178,32 @@ def test_noise_scenario_adds_errors_for_both_samplers(
     modern = sampler.run([circuit]).result(timeout=120)[0].data.meas.get_counts()
     for counts in (legacy, modern):
         assert counts.get("01", 0) + counts.get("10", 0) > 0
+
+
+def test_executor_stub_handles_large_entangled_circuit_quickly(
+    localqpu_service: QiskitRuntimeService, localqpu_control: LocalqpuControl
+) -> None:
+    """기본 한도(24)를 넘는 30큐비트 얽힘 회로도 근사(stub)로 빠르게 결과 형태를 돌려준다."""
+    import time
+
+    import numpy as np
+    from qiskit import QuantumCircuit
+    from qiskit.transpiler import generate_preset_pass_manager
+
+    backend = localqpu_service.backend("ibm_brisbane")
+    generator = np.random.default_rng(5)
+    circuit = QuantumCircuit(30)
+    for layer in range(6):
+        for qubit in range(30):
+            circuit.ry(float(generator.uniform(0, np.pi)), qubit)
+        for qubit in range(layer % 2, 29, 2):
+            circuit.cx(qubit, qubit + 1)
+    circuit.measure_all()
+    isa = generate_preset_pass_manager(backend=backend, optimization_level=1).run(circuit)
+    sampler = ExecutorSampler(mode=backend)
+    sampler.options.default_shots = 32
+    started = time.monotonic()
+    bit_array = sampler.run([isa]).result(timeout=120)[0].data.meas
+    assert time.monotonic() - started < 30
+    assert bit_array.num_shots == 32 and bit_array.num_bits == 30
+    assert localqpu_control.jobs()[-1]["is_stub"] is True

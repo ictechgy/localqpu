@@ -23,7 +23,7 @@ DEFAULT_PORT: int = 8787
 #: 기본으로 노출하는 칩 스냅샷 이름.
 DEFAULT_BACKENDS: tuple[str, ...] = ("ibm_brisbane",)
 
-#: 정확 시뮬레이션을 허용하는 최대 얽힌 큐비트 수(여러 큐비트 게이트가 걸린 큐비트). 넘으면 stub 또는 실패.
+#: 정확 시뮬레이션을 허용하는 최대 얽힌 큐비트 수(여러 큐비트 게이트가 걸린 큐비트). 넘으면 stub.
 DEFAULT_MAX_SIM_QUBITS: int = 24
 
 #: localqpu 자체 사유(입력 해석 실패, 한도 초과 등)로 작업이 실패했을 때 쓰는 사유 코드.
