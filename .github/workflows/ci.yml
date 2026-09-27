@@ -1,0 +1,28 @@
+# qiskit-ibm-runtime 고정 버전(0.50.*)과 최신 버전에서 모두 검사한다.
+# 최신에서만 실패하면 IBM API·SDK가 바뀌었다는 신호다(설계서 8절).
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: ["0.50.*", "latest"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: 의존성 설치
+        run: uv sync --python 3.12
+      - name: qiskit-ibm-runtime 고정 버전
+        if: matrix.runtime != 'latest'
+        run: uv pip install "qiskit-ibm-runtime==${{ matrix.runtime }}"
+      - name: qiskit-ibm-runtime 최신 버전
+        if: matrix.runtime == 'latest'
+        run: uv pip install --upgrade qiskit-ibm-runtime
+      - run: uv run --no-sync ruff check .
+      - run: uv run --no-sync ruff format --check .
+      - run: uv run --no-sync mypy
+      - run: uv run --no-sync pytest -q
