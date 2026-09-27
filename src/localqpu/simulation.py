@@ -13,9 +13,9 @@ from dataclasses import dataclass
 import numpy as np
 from qiskit import QuantumCircuit
 from qiskit.circuit import Barrier, CircuitInstruction
-from qiskit.primitives import StatevectorSampler
 from qiskit.primitives.containers import BitArray, DataBin, PrimitiveResult, SamplerPubResult
 from qiskit.primitives.containers.sampler_pub import SamplerPub
+from qiskit_aer.primitives import SamplerV2 as AerSampler
 
 #: 큐비트를 "사용 중"으로 만들지 않는 연산. 배치 후 회로에는 전 큐비트 barrier가 흔하다.
 _NON_COMPUTATIONAL_OPERATIONS: frozenset[str] = frozenset({"barrier", "delay"})
@@ -84,7 +84,8 @@ def sample_pubs(
         SamplerPub(compact_idle_qubits(pub.circuit), pub.parameter_values, pub.shots)
         for pub in pubs
     ]
-    result = StatevectorSampler(seed=seed).run(compacted).result()
+    # 중간 측정·조건 분기(동적 회로)를 실제 하드웨어처럼 지원하려고 Aer를 쓴다.
+    result = AerSampler(seed=seed).run(compacted).result()
     return SimulationOutcome(result, is_stub=False, active_qubits=active_qubits)
 
 

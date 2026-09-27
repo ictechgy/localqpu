@@ -106,3 +106,32 @@ def test_parameter_sweep_shape_stub() -> None:
     """stub에서도 파라미터 스윕 모양이 유지된다."""
     result = sample_pubs([sweep_pub()], 0, seed=2).result[0].data.c
     assert result.shape == (3,) and result.num_shots == 50
+
+
+def test_mid_circuit_measurement_is_simulated() -> None:
+    """중간 측정이 있는 회로도 정확히 계산된다(실제 하드웨어가 지원하는 동적 회로)."""
+    circuit = QuantumCircuit(3)
+    register = ClassicalRegister(2, "c")
+    circuit.add_register(register)
+    circuit.h(2)
+    circuit.measure(2, register[0])
+    circuit.x(2)
+    circuit.measure(2, register[1])
+    outcome = sample_pubs([SamplerPub.coerce((circuit, None, 200))], 24, seed=4)
+    counts = outcome.result[0].data.c.get_counts()
+    assert set(counts) <= {"01", "10"} and sum(counts.values()) == 200
+
+
+def test_classical_feedforward_is_simulated() -> None:
+    """측정 결과에 따라 게이트를 거는 if_test 회로도 정확히 계산된다."""
+    circuit = QuantumCircuit(2)
+    register = ClassicalRegister(2, "c")
+    circuit.add_register(register)
+    circuit.h(0)
+    circuit.measure(0, register[0])
+    with circuit.if_test((register[0], 1)):
+        circuit.x(1)
+    circuit.measure(1, register[1])
+    outcome = sample_pubs([SamplerPub.coerce((circuit, None, 200))], 24, seed=5)
+    counts = outcome.result[0].data.c.get_counts()
+    assert set(counts) <= {"00", "11"} and sum(counts.values()) == 200
