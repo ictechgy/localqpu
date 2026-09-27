@@ -146,3 +146,25 @@ def test_concurrent_consumption_is_exact() -> None:
     for thread in threads:
         thread.join()
     assert sum(outcome.outcome == "failed" for outcome in outcomes) == 10
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [{"queue": {"delay_seconds": 10**400}}, {"failures": {"rate": 10**400}}],
+)
+def test_huge_integer_is_rejected_not_crashed(raw: dict[str, object]) -> None:
+    """float로 바꿀 수 없을 만큼 큰 정수도 OverflowError가 아니라 ScenarioError로 거절된다."""
+    with pytest.raises(ScenarioError, match="유한한 숫자"):
+        parse_scenario(raw)
+
+
+def test_nested_error_names_list_index() -> None:
+    """next_jobs 항목 오류 메시지에 몇 번째 항목인지가 들어간다."""
+    with pytest.raises(ScenarioError, match=r"next_jobs\[2\]"):
+        parse_scenario({"next_jobs": [{}, {}, {"reason": 5}]})
+
+
+def test_nested_error_names_backend() -> None:
+    """backends 항목 오류 메시지에 어느 백엔드인지가 들어간다."""
+    with pytest.raises(ScenarioError, match=r"backends\.ibm_b"):
+        parse_scenario({"backends": {"ibm_a": {}, "ibm_b": {"status": "down"}}})

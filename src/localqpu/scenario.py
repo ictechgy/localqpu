@@ -223,6 +223,9 @@ def _build(settings_type: Any, raw: object, location: str) -> Any:
     _reject_unknown_keys(mapping, allowed, location)
     try:
         return settings_type(**mapping)
+    except ScenarioError as error:
+        # __post_init__은 목록 인덱스·백엔드 이름을 모르므로 여기서 정확한 위치를 붙인다.
+        raise ScenarioError(f"{location}: {error}") from error
     except TypeError as error:
         # 숫자 자리에 문자열이 오면 __post_init__의 비교에서 TypeError가 난다.
         raise ScenarioError(
@@ -270,8 +273,17 @@ def _require_optional_int(value: object, location: str) -> None:
 
 
 def _require_number(value: object, location: str) -> None:
-    """유한한 숫자인지 확인한다. 불리언과 NaN·무한대는 거절한다."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    """유한한 숫자인지 확인한다. 불리언, NaN·무한대, float로 바꿀 수 없는 거대한 정수는 거절한다."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ScenarioError(f"{location}은(는) 유한한 숫자여야 합니다(받은 값: {value!r}).")
+    try:
+        is_finite = math.isfinite(value)
+    except OverflowError as error:
+        # 10**400 같은 정수는 float 변환에서 OverflowError가 난다.
+        raise ScenarioError(
+            f"{location}은(는) 유한한 숫자여야 합니다(받은 값이 너무 큽니다)."
+        ) from error
+    if not is_finite:
         raise ScenarioError(f"{location}은(는) 유한한 숫자여야 합니다(받은 값: {value!r}).")
 
 
