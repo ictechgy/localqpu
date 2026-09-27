@@ -5,11 +5,26 @@ description = "A local emulator of the IBM Quantum Platform API, built for testi
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
+keywords = ["qiskit", "quantum", "emulator", "testing", "mock", "ibm-quantum"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Software Development :: Testing :: Mocking",
+]
 dependencies = [
     "qiskit-ibm-runtime>=0.50",
     "qiskit-aer>=0.17",
     "PyJWT>=2.8",
 ]
+
+[project.urls]
+Repository = "https://github.com/ictechgy/localqpu"
+Issues = "https://github.com/ictechgy/localqpu/issues"
 
 [project.scripts]
 localqpu = "localqpu.cli:main"
@@ -26,6 +41,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/localqpu"]
+
+[tool.hatch.build.targets.sdist]
+# 로컬 도구 폴더와 배포에 필요 없는 CI·설계 문서는 소스 배포본에서 뺀다.
+exclude = [".superpowers", ".serena", ".github", "docs"]
 
 [tool.ruff]
 line-length = 100
