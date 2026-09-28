@@ -67,3 +67,42 @@ def test_physical_qubit_references_are_counted() -> None:
 def test_registry_includes_braket() -> None:
     """braket-openqasm이 레지스트리에 등록돼 있다."""
     assert find_program_runner("braket-openqasm") is run_braket_program
+
+
+def openqasm_action(source: str) -> str:
+    """OpenQASM 소스를 CreateQuantumTask action JSON으로 감싼다."""
+    return json.dumps(
+        {
+            "braketSchemaHeader": {"name": "braket.ir.openqasm.program", "version": "1"},
+            "source": source,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    ["qubit [5] q;", "const int n = 5;\nqubit[n] q;"],
+)
+def test_limit_cannot_be_bypassed_by_declaration_style(declaration: str) -> None:
+    """공백이 있는 선언이나 상수 크기 선언도 실제로 쓰인 큐비트 수로 세어 한도를 적용한다."""
+    gates = "\n".join(f"h q[{index}];" for index in range(5))
+    action = openqasm_action(f"OPENQASM 3.0;\n{declaration}\n{gates}")
+    with pytest.raises(ProgramInputError, match="max-sim-qubits"):
+        run_braket_program({"action": action, "shots": 10}, ExecutionSettings(4, None))
+
+
+def test_declared_but_unused_qubits_do_not_count() -> None:
+    """선언만 하고 쓰지 않은 큐비트는 계산 비용이 없으므로 세지 않는다."""
+    action = openqasm_action(
+        "OPENQASM 3.0;\nqubit[20] q;\nbit[1] b;\nh q[0];\nb[0] = measure q[0];"
+    )
+    output = run_braket_program({"action": action, "shots": 10}, ExecutionSettings(4, None))
+    assert output.entangled_qubits == 1
+
+
+def test_unparsable_source_is_input_error() -> None:
+    """문법이 틀린 OpenQASM은 입력 오류다."""
+    with pytest.raises(ProgramInputError, match="OpenQASM"):
+        run_braket_program(
+            {"action": openqasm_action("OPENQASM 3.0;\nqubit[2 q;"), "shots": 1}, SETTINGS
+        )
