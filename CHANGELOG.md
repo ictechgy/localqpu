@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **HTTP-level fault injection** (`http_faults` in the scenario): status codes with `Retry-After`, slow responses, dropped connections, and lost responses (`phase: "after"`), matched by path pattern and method. Contract tests pin the real client's behaviour: it recovers from transient 503s, gives up after 5 retries, does not retry 429, and **submits a job twice** when a `POST /api/v1/jobs` response is lost.
+- **Request journal**: `GET /_localqpu/requests` and `LocalqpuControl.requests()` list recent requests (method, host, path, status, fault, duration) without bodies, headers or query strings.
+- **Job queries and management**: `service.jobs(...)` with filters and paging, `job.metrics()`, `job.usage()`, `job.logs()`, `job.update_tags(...)`, `service.delete_job(id)`. Submitted `tags` and `private` are kept and returned by `service.job(id)`.
+
 ## 0.2.1 — 2026-09-28
 
 ### Fixed

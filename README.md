@@ -182,6 +182,8 @@ assert submissions == [503, 503, 200]
 
 All of them also work inside `Session(...)` and `Batch(...)`.
 
+Job management works too: `service.job(id)`, `service.jobs(...)` (filters by backend, program, tags, session, pending, creation time, with paging), `job.metrics()`, `job.usage()` (always 0 — it is a simulator), `job.logs()`, `job.update_tags(...)` and `service.delete_job(id)`. Job inputs are not retained after a job starts running, so `job.inputs` is empty.
+
 ## Simulation size
 
 Circuits arrive laid out on the full chip (e.g. 127 qubits), but what makes simulation expensive is entanglement, not width. localqpu therefore limits the number of **entangled qubits** — qubits touched by multi-qubit gates — with `--max-sim-qubits` (default 24), and simulates exactly with Aer's matrix-product-state method, which is cheap for qubits that only get single-qubit gates or measurements. Above the limit you get a stub instead of an error: `sampler` and `estimator` return shape-correct random values (`metadata["localqpu_stub"]`), and `executor` runs an approximate simulation with a capped MPS bond dimension, so the result structure is exact but the values are not meaningful. Stub jobs are flagged with `is_stub: true` in `GET /_localqpu/jobs` and logged by the server.
