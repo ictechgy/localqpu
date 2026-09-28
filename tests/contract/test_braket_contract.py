@@ -79,3 +79,12 @@ def test_environment_proxy_does_not_hijack_braket(
         sv1(localqpu_server).run(Circuit().h(0).cnot(0, 1), shots=20).result().measurement_counts
     )
     assert sum(counts.values()) == 20
+
+
+def test_queue_position_through_sdk(
+    localqpu_server: RunningServer, localqpu_control: LocalqpuControl
+) -> None:
+    """SDK의 queue_position()이 대기 중인 작업의 순서를 읽는다(v0.2.0에서는 KeyError)."""
+    localqpu_control.set_scenario({"queue": {"polls_before_running": 1000}})
+    task = sv1(localqpu_server).run(Circuit().h(0), shots=10)
+    assert task.queue_position().queue_position == "1"

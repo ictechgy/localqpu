@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from localqpu.aws.devices import SV1_BACKEND_NAME
 from localqpu.aws.routes import register_aws_routes
 from localqpu.context import AppContext, ServerConfig
 from localqpu.control import register_control_routes
@@ -22,7 +23,7 @@ def build_context(config: ServerConfig) -> AppContext:
         ScenarioError: 시나리오가 카탈로그에 없는 백엔드를 가리킬 때.
     """
     catalog = BackendCatalog(config.backends)
-    ensure_known_backends(config.scenario, catalog.names)
+    ensure_known_backends(config.scenario, [*catalog.names, SV1_BACKEND_NAME])
     scenario_state = ScenarioState(config.scenario)
     return AppContext(
         config=config,

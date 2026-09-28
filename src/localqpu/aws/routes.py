@@ -63,8 +63,13 @@ def create_quantum_task(context: AppContext, request: Request, params: dict[str,
     rejection = _reject_task_request(body)
     if rejection is not None:
         return rejection
+    existing = _job_for_client_token(context, body.get("clientToken"))
+    if existing is not None:
+        # clientToken은 멱등성 토큰이다(botocore 모델). 재시도가 작업을 두 번 만들지 않게 한다.
+        return Response(201, {"quantumTaskArn": task_arn_for(existing.job_id)})
     job_id = f"localqpu-{uuid.uuid4().hex[:12]}"
     metadata = {
+        "client_token": body.get("clientToken"),
         "output_bucket": body["outputS3Bucket"],
         "output_directory": f"{body['outputS3KeyPrefix']}/{job_id}",
         "shots": body["shots"],
@@ -78,6 +83,21 @@ def create_quantum_task(context: AppContext, request: Request, params: dict[str,
         metadata=metadata,
     )
     return Response(201, {"quantumTaskArn": task_arn_for(job_id)})
+
+
+def _job_for_client_token(context: AppContext, client_token: object) -> JobRecord | None:
+    """같은 clientToken으로 이미 만든 Braket 작업. 토큰이 없으면 None."""
+    if not isinstance(client_token, str) or not client_token:
+        return None
+    return next(
+        (
+            job
+            for job in context.jobs.list_jobs()
+            if job.program_id == BRAKET_PROGRAM_ID
+            and job.metadata.get("client_token") == client_token
+        ),
+        None,
+    )
 
 
 def _reject_task_request(body: Any) -> Response | None:
@@ -117,7 +137,7 @@ def get_quantum_task(context: AppContext, request: Request, params: dict[str, st
     job = context.jobs.poll(job_id) if job_id else None
     if job is None or job.program_id != BRAKET_PROGRAM_ID:
         return _task_not_found(unquote(params["task_arn"]))
-    return Response(200, task_to_api(job))
+    return Response(200, {**task_to_api(job), "queueInfo": _queue_info(context, job)})
 
 
 def cancel_quantum_task(context: AppContext, request: Request, params: dict[str, str]) -> Response:
@@ -148,13 +168,18 @@ def get_device(context: AppContext, request: Request, params: dict[str, str]) ->
     except ImportError:
         return aws_error(501, "ValidationException", MISSING_BRAKET_MESSAGE)
     return Response(
-        200, {**sv1_summary(), "deviceCapabilities": capabilities, "deviceQueueInfo": []}
+        200,
+        {
+            **sv1_summary(_sv1_status(context)),
+            "deviceCapabilities": capabilities,
+            "deviceQueueInfo": [],
+        },
     )
 
 
 def search_devices(context: AppContext, request: Request, params: dict[str, str]) -> Response:
     """SearchDevices. 필터와 무관하게 SV1 하나를 돌려준다."""
-    return Response(200, {"devices": [sv1_summary()]})
+    return Response(200, {"devices": [sv1_summary(_sv1_status(context))]})
 
 
 def get_s3_object(context: AppContext, request: Request, params: dict[str, str]) -> Response:
@@ -165,6 +190,12 @@ def get_s3_object(context: AppContext, request: Request, params: dict[str, str])
         if _is_result_object(job, bucket, key):
             return Response(200, _result_with_arns(job))
     return _s3_no_such_key(key)
+
+
+def _sv1_status(context: AppContext) -> str:
+    """시나리오의 sv1 설정을 Braket 장치 상태로 바꾼다(offline만 OFFLINE, 나머지는 ONLINE)."""
+    override = context.scenario_state.current().backend_override(SV1_BACKEND_NAME)
+    return "OFFLINE" if override.status == "offline" else "ONLINE"
 
 
 def task_to_api(job: JobRecord) -> dict[str, Any]:
@@ -187,6 +218,31 @@ def task_to_api(job: JobRecord) -> dict[str, Any]:
     if job.status in ("Failed", "Cancelled") and job.reason:
         response["failureReason"] = job.reason
     return response
+
+
+def _queue_info(context: AppContext, job: JobRecord) -> dict[str, str]:
+    """SDK queue_position()이 읽는 queueInfo. 대기 중이면 Braket 작업들 사이의 순서, 아니면 "None"."""
+    status = BRAKET_STATUS[job.status]
+    if job.status != "Queued":
+        message = (
+            f"Task is in {status} status. localqpu does not show queue position for this status."
+        )
+        return {
+            "queue": "QUANTUM_TASKS_QUEUE",
+            "position": "None",
+            "queuePriority": "Normal",
+            "message": message,
+        }
+    queued = [
+        other.job_id
+        for other in context.jobs.list_jobs()
+        if other.program_id == BRAKET_PROGRAM_ID and other.status == "Queued"
+    ]
+    return {
+        "queue": "QUANTUM_TASKS_QUEUE",
+        "position": str(queued.index(job.job_id) + 1),
+        "queuePriority": "Normal",
+    }
 
 
 def _is_result_object(job: JobRecord, bucket: str, key: str) -> bool:
