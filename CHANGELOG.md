@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-09-28
 
 ### Added
 - **HTTP-level fault injection** (`http_faults` in the scenario): status codes with `Retry-After`, slow responses, dropped connections, and lost responses (`phase: "after"`), matched by path pattern and method. Contract tests pin the real client's behaviour: it recovers from transient 503s, gives up after 5 retries, does not retry 429, and **submits a job twice** when a `POST /api/v1/jobs` response is lost.
