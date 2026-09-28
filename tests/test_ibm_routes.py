@@ -313,3 +313,42 @@ def test_unknown_session_details_is_404(server: RunningServer) -> None:
     """모르는 세션 조회는 재시작 안내와 함께 404다."""
     status, body = send_direct("GET", f"{server.url}/api/v1/sessions/nope")
     assert status == 404 and "재시작" in body["errors"][0]["message"]
+
+
+def test_session_closed_between_check_and_submit_is_rejected() -> None:
+    """세션 검증을 통과한 직후 세션이 닫히면, 등록된 작업을 취소하고 409를 돌려준다(닫힌 세션에 작업이 남지 않음)."""
+    from localqpu.app import build_context, build_router
+    from localqpu.server import Request
+
+    context = build_context(ServerConfig(port=0))
+    router = build_router(context)
+    created = router.dispatch(
+        Request(
+            "POST",
+            "/api/v1/sessions",
+            {},
+            json.dumps({"mode": "dedicated", "backend": "ibm_brisbane"}).encode(),
+        )
+    )
+    session_id = created.body["id"]
+    original_submit = context.jobs.submit
+
+    def submit_after_concurrent_close(*args: Any, **kwargs: Any) -> Any:
+        """검증과 등록 사이에 다른 요청이 세션을 닫은 상황을 흉내 낸다."""
+        context.sessions.close(session_id)
+        return original_submit(*args, **kwargs)
+
+    context.jobs.submit = submit_after_concurrent_close  # type: ignore[method-assign]
+    try:
+        response = router.dispatch(
+            Request(
+                "POST",
+                "/api/v1/jobs",
+                {},
+                json.dumps({**sampler_payload(), "session_id": session_id}).encode(),
+            )
+        )
+        assert response.status == 409
+        assert all(job.status == "Cancelled" for job in context.jobs.list_jobs())
+    finally:
+        context.jobs.shutdown()
