@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 — 2026-09-28
+
+### Fixed
+- **Braket qubit limit bypass**: qubits were counted with a regular expression that missed `qubit [25] q;` (space before the bracket) and `qubit[n] q;` (constant size), so such programs skipped `--max-sim-qubits` and could exhaust memory. Qubits are now counted with Braket's own OpenQASM interpreter (the qubits the program actually uses, which is what the simulator allocates).
+- **Braket `task.queue_position()`** raised `KeyError`: `GetQuantumTask` now includes `queueInfo`.
+- **Braket `clientToken` idempotency**: creating a task twice with the same token now returns the same task, as the AWS API does.
+- **Braket device status**: the scenario can set `sv1` offline (the server used to reject it at start); `GetDevice` reports `OFFLINE` and tasks stay `QUEUED`.
+- **Session race**: a job submitted while its session was being closed could stay queued in the closed session; it is now cancelled and the submission gets 409.
+
 ## 0.2.0 — 2026-09-27
 
 ### Added

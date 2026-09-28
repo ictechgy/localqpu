@@ -1,7 +1,7 @@
 """localqpu: IBM Quantum Platform API를 로컬에서 흉내 내는 테스트용 에뮬레이터."""
 
 #: 패키지 버전. pyproject.toml의 version과 같아야 한다.
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 from localqpu.app import start_server  # noqa: E402
 from localqpu.aws.client import connect_braket  # noqa: E402
