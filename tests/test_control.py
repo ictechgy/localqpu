@@ -101,3 +101,21 @@ def test_reset_clears_sessions(server: RunningServer) -> None:
     )
     control.reset()
     assert send_direct("GET", f"{server.url}/api/v1/sessions/{created['id']}")[0] == 404
+
+
+def test_http_fault_scenario_and_request_journal(server: RunningServer) -> None:
+    """시나리오의 http_faults가 실제 요청에 적용되고, 요청 기록으로 확인되며, 남은 횟수가 보인다."""
+    control = LocalqpuControl(server.url)
+    control.set_scenario(
+        {"http_faults": [{"method": "GET", "path": "/api/v1/backends", "status": 503, "times": 1}]}
+    )
+    assert send_direct("GET", f"{server.url}/api/v1/backends")[0] == 503
+    assert send_direct("GET", f"{server.url}/api/v1/backends")[0] == 200
+    journal = control.requests()
+    assert [(entry["path"], entry["status"]) for entry in journal] == [
+        ("/api/v1/backends", 503),
+        ("/api/v1/backends", 200),
+    ]
+    assert control.scenario()["http_faults"][0]["times"] == 0
+    control.reset()
+    assert control.requests() == []

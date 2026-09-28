@@ -26,6 +26,7 @@ def register_control_routes(router: Router, context: AppContext) -> None:
         ("PUT", "/_localqpu/scenario", put_scenario),
         ("POST", "/_localqpu/reset", reset_state),
         ("GET", "/_localqpu/jobs", list_jobs),
+        ("GET", "/_localqpu/requests", list_requests),
     ]
     for method, pattern, handler in routes:
         router.add(method, pattern, partial(handler, context))
@@ -69,6 +70,11 @@ def reset_state(context: AppContext, request: Request, params: dict[str, str]) -
 def list_jobs(context: AppContext, request: Request, params: dict[str, str]) -> Response:
     """제출된 작업 요약. 테스트 단언용이며 상태를 진행시키지 않는다."""
     return Response(200, {"jobs": [_job_summary(job) for job in context.jobs.list_jobs()]})
+
+
+def list_requests(context: AppContext, request: Request, params: dict[str, str]) -> Response:
+    """최근 요청 기록(제어 API 제외). 재시도 횟수·순서를 단언하는 용도다."""
+    return Response(200, {"requests": context.stats.requests()})
 
 
 def _job_summary(job: JobRecord) -> dict[str, Any]:

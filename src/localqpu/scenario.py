@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import dataclasses
+import fnmatch
 import math
 import random
 import threading
@@ -17,12 +18,15 @@ from typing import Any, Literal, get_args
 #: 작업 하나가 맞을 수 있는 결말.
 JobOutcomeKind = Literal["completed", "failed", "cancelled"]
 
+#: HTTP 장애를 적용하는 시점. before는 처리 없이 실패, after는 처리한 뒤 응답만 실패(유실된 응답).
+FaultPhase = Literal["before", "after"]
+
 #: 백엔드가 가질 수 있는 상태.
 BackendStatusKind = Literal["online", "offline", "paused"]
 
 #: 시나리오 JSON 최상위에서 허용하는 키.
 _TOP_LEVEL_KEYS: frozenset[str] = frozenset(
-    {"seed", "queue", "failures", "next_jobs", "backends", "usage", "auth", "noise"}
+    {"seed", "queue", "failures", "next_jobs", "backends", "usage", "auth", "noise", "http_faults"}
 )
 
 
@@ -130,6 +134,69 @@ class UsageSettings:
 
 
 @dataclass(frozen=True)
+class HttpFault:
+    """HTTP 요청에 적용할 장애 규칙(v0.3 설계서 1절).
+
+    Attributes:
+        path: 적용할 경로의 fnmatch 패턴(예: /api/v1/jobs/*/results).
+        method: 적용할 메서드. None이면 모든 메서드.
+        times: 남은 적용 횟수. 시나리오를 읽을 때는 1 이상이어야 한다.
+        status: 돌려줄 상태 코드. None이면 상태를 바꾸지 않는다.
+        retry_after: Retry-After 헤더 값(초).
+        message: 오류 본문 메시지.
+        drop_connection: 응답 없이 연결을 끊는다.
+        delay_seconds: 응답 전에 기다릴 시간.
+        phase: before는 처리 없이 실패, after는 정상 처리한 뒤 응답만 실패.
+    """
+
+    path: str
+    method: str | None = None
+    times: int = 1
+    status: int | None = None
+    retry_after: int | None = None
+    message: str | None = None
+    drop_connection: bool = False
+    delay_seconds: float = 0.0
+    phase: FaultPhase = "before"
+
+    def __post_init__(self) -> None:
+        """필드 타입·범위와 효과가 있는지 확인한다."""
+        _require_str(self.path, "http_faults[].path")
+        _require_optional_str(self.method, "http_faults[].method")
+        _require_optional_str(self.message, "http_faults[].message")
+        _require_int(self.times, "http_faults[].times")
+        _require_optional_int(self.status, "http_faults[].status")
+        _require_optional_int(self.retry_after, "http_faults[].retry_after")
+        _require_number(self.delay_seconds, "http_faults[].delay_seconds")
+        if not isinstance(self.drop_connection, bool):
+            raise ScenarioError("http_faults[].drop_connection은 true 또는 false여야 합니다.")
+        _validate_fault_ranges(self)
+
+    def matches(self, method: str, path: str) -> bool:
+        """이 규칙이 요청에 맞는지."""
+        is_method_match = self.method is None or self.method.upper() == method.upper()
+        return is_method_match and fnmatch.fnmatchcase(path, self.path)
+
+
+def _validate_fault_ranges(fault: HttpFault) -> None:
+    """HTTP 장애 규칙의 값 범위와 효과 유무를 확인한다."""
+    if fault.status is not None and not 100 <= fault.status <= 599:
+        raise ScenarioError(f"http_faults[].status는 100~599여야 합니다(받은 값: {fault.status}).")
+    if fault.times < 0 or fault.delay_seconds < 0 or (fault.retry_after or 0) < 0:
+        raise ScenarioError(
+            "http_faults[]의 times·delay_seconds·retry_after는 0 이상이어야 합니다."
+        )
+    if fault.phase not in get_args(FaultPhase):
+        raise ScenarioError(
+            f"http_faults[].phase '{fault.phase}'는 허용되지 않습니다(허용: before, after)."
+        )
+    if fault.status is None and not fault.drop_connection and fault.delay_seconds == 0:
+        raise ScenarioError(
+            "http_faults 항목에 효과가 없습니다. status·drop_connection·delay_seconds 중 하나를 지정하세요."
+        )
+
+
+@dataclass(frozen=True)
 class Scenario:
     """서버 전체의 장애 시나리오. 기본값은 "모든 작업 즉시 성공"이다."""
 
@@ -141,6 +208,7 @@ class Scenario:
     usage: UsageSettings = field(default_factory=UsageSettings)
     reject_tokens: bool = False
     noise: bool = False
+    http_faults: tuple[HttpFault, ...] = ()
 
     def backend_override(self, name: str) -> BackendOverride:
         """백엔드의 상태 설정을 돌려준다. 지정하지 않았으면 온라인이다."""
@@ -164,6 +232,7 @@ def parse_scenario(raw: object) -> Scenario:
         usage=_build(UsageSettings, mapping.get("usage"), "usage"),
         reject_tokens=_parse_reject_tokens(mapping.get("auth", {})),
         noise=_parse_noise(mapping.get("noise", False)),
+        http_faults=_parse_http_faults(mapping.get("http_faults", [])),
     )
 
 
@@ -187,6 +256,7 @@ def scenario_to_json(scenario: Scenario) -> dict[str, Any]:
     """시나리오를 parse_scenario가 다시 읽을 수 있는 JSON 객체로 바꾼다."""
     raw = dataclasses.asdict(scenario)
     raw["next_jobs"] = list(raw["next_jobs"])
+    raw["http_faults"] = list(raw["http_faults"])
     raw["auth"] = {"reject_tokens": raw.pop("reject_tokens")}
     return raw
 
@@ -204,6 +274,19 @@ def _parse_backends(raw: object) -> dict[str, BackendOverride]:
     return {
         name: _build(BackendOverride, value, f"backends.{name}") for name, value in mapping.items()
     }
+
+
+def _parse_http_faults(raw: object) -> tuple[HttpFault, ...]:
+    """http_faults 배열을 규칙 튜플로 바꾼다. 시나리오로 받을 때는 times가 1 이상이어야 한다."""
+    if not isinstance(raw, list):
+        raise ScenarioError("http_faults는 배열이어야 합니다.")
+    faults = tuple(
+        _build(HttpFault, item, f"http_faults[{index}]") for index, item in enumerate(raw)
+    )
+    for index, fault in enumerate(faults):
+        if fault.times < 1:
+            raise ScenarioError(f"http_faults[{index}].times는 1 이상이어야 합니다.")
+    return faults
 
 
 def _parse_noise(raw: object) -> bool:
@@ -324,7 +407,15 @@ class ScenarioState:
     def current(self) -> Scenario:
         """아직 소비하지 않은 next_jobs를 반영한 현재 시나리오."""
         with self._lock:
-            return dataclasses.replace(self._scenario, next_jobs=tuple(self._pending))
+            faults = tuple(
+                dataclasses.replace(fault, times=remaining)
+                for fault, remaining in zip(
+                    self._scenario.http_faults, self._fault_remaining, strict=True
+                )
+            )
+            return dataclasses.replace(
+                self._scenario, next_jobs=tuple(self._pending), http_faults=faults
+            )
 
     def set_scenario(self, scenario: Scenario) -> None:
         """시나리오를 교체하고 난수 생성기를 새 시드로 초기화한다."""
@@ -346,6 +437,15 @@ class ScenarioState:
                 return JobOutcome("failed", failures.reason, failures.reason_code)
             return JobOutcome()
 
+    def consume_http_fault(self, method: str, path: str) -> HttpFault | None:
+        """요청에 맞는 첫 HTTP 장애 규칙을 한 번 소비해 돌려준다. 없으면 None."""
+        with self._lock:
+            for index, fault in enumerate(self._scenario.http_faults):
+                if self._fault_remaining[index] > 0 and fault.matches(method, path):
+                    self._fault_remaining[index] -= 1
+                    return fault
+            return None
+
     def derive_seed(self) -> int | None:
         """작업 하나에 쓸 시뮬레이션 시드. 시나리오에 seed가 없으면 None이다."""
         with self._lock:
@@ -357,4 +457,5 @@ class ScenarioState:
         """잠금을 잡은 상태에서 시나리오와 난수 상태를 바꾼다."""
         self._scenario = scenario
         self._pending = list(scenario.next_jobs)
+        self._fault_remaining = [fault.times for fault in scenario.http_faults]
         self._random = random.Random(scenario.seed)

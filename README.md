@@ -115,6 +115,52 @@ Use `localqpu start --scenario scenario.json` or `localqpu_control.set_scenario(
 
 > `QiskitRuntimeService` caches the backend list after the first `least_busy()`/`backends()` call, exactly as it does against IBM. After changing backend status in a scenario, create a new service (the `localqpu_service` fixture gives you a fresh one per test).
 
+## HTTP-level faults
+
+Job-level scenarios cover what happens *after* the platform accepts a job. To test the transport layer — retries, rate limits, slow or broken connections — add `http_faults`. Rules are matched in order (`path` is an fnmatch pattern, `method` is optional) and each applies `times` requests (default 1):
+
+```python
+localqpu_control.set_scenario(
+    {
+        "http_faults": [
+            {
+                "method": "POST",
+                "path": "/api/v1/jobs",
+                "status": 503,
+                "times": 2,
+            },  # transient outage
+            {
+                "method": "POST",
+                "path": "/api/v1/jobs",
+                "status": 429,
+                "retry_after": 30,
+            },  # rate limit
+            {"path": "/api/v1/jobs/*", "delay_seconds": 2},  # slow responses
+            {
+                "method": "GET",
+                "path": "/api/v1/jobs/*",
+                "drop_connection": True,
+            },  # broken connection
+            {
+                "method": "POST",
+                "path": "/api/v1/jobs",
+                "status": 503,
+                "phase": "after",
+            },  # processed, response lost
+        ]
+    }
+)
+```
+
+`phase: "after"` processes the request normally and only fails the response — the classic lost-response case. With qiskit-ibm-runtime 0.50, which retries 500/502/503/504/52x (including `POST`) up to 5 times but never 429, a lost `POST /api/v1/jobs` response makes the client **submit the job twice**. Control API paths are never faulted.
+
+Assert on what actually went over the wire with the request journal (method, host, path, status, fault, duration — no bodies, headers or query strings):
+
+```python
+submissions = [r["status"] for r in localqpu_control.requests() if r["path"] == "/api/v1/jobs"]
+assert submissions == [503, 503, 200]
+```
+
 ## Control API
 
 | Method and path | Purpose |
@@ -123,6 +169,7 @@ Use `localqpu start --scenario scenario.json` or `localqpu_control.set_scenario(
 | `GET`/`PUT /_localqpu/scenario` | Read or replace the scenario |
 | `POST /_localqpu/reset` | Reset jobs, scenario, and stats |
 | `GET /_localqpu/jobs` | Summary of submitted jobs |
+| `GET /_localqpu/requests` | Recent request journal (last 1000, control API excluded) |
 
 ## Supported primitives
 

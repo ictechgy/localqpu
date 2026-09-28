@@ -11,7 +11,15 @@ from localqpu.ibm.routes import register_ibm_routes
 from localqpu.ibm.session_routes import register_session_routes
 from localqpu.jobs import JobManager
 from localqpu.scenario import ScenarioState, ensure_known_backends
-from localqpu.server import Router, RunningServer, ServerStats, serve
+from localqpu.server import (
+    FaultDecision,
+    FaultPolicy,
+    Request,
+    Router,
+    RunningServer,
+    ServerStats,
+    serve,
+)
 from localqpu.sessions import SessionManager
 
 
@@ -45,6 +53,26 @@ def build_router(context: AppContext) -> Router:
     return router
 
 
+def scenario_fault_policy(scenario_state: ScenarioState) -> FaultPolicy:
+    """시나리오의 http_faults 규칙을 요청마다 소비해 서버의 장애 결정으로 바꾸는 정책."""
+
+    def decide(request: Request) -> FaultDecision | None:
+        """요청에 맞는 규칙이 있으면 한 번 소비해 장애 결정을 돌려준다."""
+        fault = scenario_state.consume_http_fault(request.method, request.path)
+        if fault is None:
+            return None
+        return FaultDecision(
+            status=fault.status,
+            retry_after=fault.retry_after,
+            message=fault.message,
+            drop_connection=fault.drop_connection,
+            delay_seconds=fault.delay_seconds,
+            phase=fault.phase,
+        )
+
+    return decide
+
+
 def start_server(config: ServerConfig | None = None) -> RunningServer:
     """localqpu 서버를 백그라운드로 띄운다. 멈출 때 작업 스레드 풀도 정리한다."""
     context = build_context(config or ServerConfig())
@@ -54,6 +82,7 @@ def start_server(config: ServerConfig | None = None) -> RunningServer:
         context.config.host,
         context.config.port,
         context.config.is_verbose,
+        fault_policy=scenario_fault_policy(context.scenario_state),
     )
     server.on_stop = context.jobs.shutdown
     return server
