@@ -91,6 +91,12 @@ class SessionManager:
             session.state, session.last_job_started = "active", now
             session.activated_at = session.activated_at or now
 
+    def is_accepting(self, session_id: str) -> bool:
+        """세션이 지금도 작업을 받는지. 모르는 세션이면 False."""
+        with self._lock:
+            session = self._sessions.get(session_id)
+            return session is not None and session.accepting_jobs
+
     def close(self, session_id: str) -> bool:
         """세션을 닫는다(더 이상 작업을 받지 않음). 모르는 세션이면 False."""
         with self._lock:

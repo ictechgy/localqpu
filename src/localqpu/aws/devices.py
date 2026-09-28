@@ -29,14 +29,14 @@ def job_id_from_task_arn(task_arn: str) -> str | None:
     return task_arn.removeprefix(TASK_ARN_PREFIX) if task_arn.startswith(TASK_ARN_PREFIX) else None
 
 
-def sv1_summary() -> dict[str, Any]:
-    """SearchDevices 항목이자 GetDevice 응답의 공통 부분."""
+def sv1_summary(device_status: str = "ONLINE") -> dict[str, Any]:
+    """SearchDevices 항목이자 GetDevice 응답의 공통 부분. 상태는 시나리오의 sv1 설정을 따른다."""
     return {
         "deviceArn": SV1_ARN,
         "deviceName": "SV1",
         "providerName": "Amazon Braket",
         "deviceType": "SIMULATOR",
-        "deviceStatus": "ONLINE",
+        "deviceStatus": device_status,
     }
 
 

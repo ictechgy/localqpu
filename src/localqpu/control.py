@@ -6,6 +6,7 @@ from functools import partial
 from typing import Any
 
 from localqpu import __version__
+from localqpu.aws.devices import SV1_BACKEND_NAME
 from localqpu.context import AppContext
 from localqpu.jobs import JobRecord
 from localqpu.scenario import (
@@ -50,7 +51,7 @@ def put_scenario(context: AppContext, request: Request, params: dict[str, str]) 
     """시나리오를 교체한다. 잘못된 시나리오는 400이고 기존 시나리오를 유지한다."""
     try:
         scenario = parse_scenario(request.json_body())
-        ensure_known_backends(scenario, context.catalog.names)
+        ensure_known_backends(scenario, [*context.catalog.names, SV1_BACKEND_NAME])
     except ScenarioError as error:
         return error_response(400, str(error))
     context.scenario_state.set_scenario(scenario)

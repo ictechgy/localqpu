@@ -175,7 +175,21 @@ def submit_job(context: AppContext, request: Request, params: dict[str, str]) ->
         )
     except UnsupportedProgramError as error:
         return error_response(404, str(error))
-    return Response(200, {"id": job.job_id, "backend": job.backend_name})
+    return _reject_if_session_closed_meanwhile(context, job) or Response(
+        200, {"id": job.job_id, "backend": job.backend_name}
+    )
+
+
+def _reject_if_session_closed_meanwhile(context: AppContext, job: JobRecord) -> Response | None:
+    """세션 검증과 작업 등록 사이에 세션이 닫혔으면 방금 등록한 작업을 취소하고 409를 돌려준다.
+
+    세션 관리자와 작업 관리자는 잠금이 달라 두 단계를 한 번에 묶을 수 없다. 등록 뒤에 다시 확인해
+    닫힌 세션에 작업이 남는 경쟁을 없앤다(세션 취소가 먼저 끝났어도 여기서 정리된다).
+    """
+    if job.session_id is None or context.sessions.is_accepting(job.session_id):
+        return None
+    context.jobs.cancel(job.job_id)
+    return error_response(409, f"세션 '{job.session_id}'이 제출 도중 닫혀 작업을 취소했습니다.")
 
 
 def _reject_malformed_submission(payload: dict[str, Any]) -> Response | None:

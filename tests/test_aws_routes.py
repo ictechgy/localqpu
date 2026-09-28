@@ -34,10 +34,12 @@ def server() -> Iterator[RunningServer]:
     running.stop()
 
 
-def create_task(server: RunningServer, shots: int = 50) -> str:
-    """Bell 회로 작업을 만들고 ARN을 돌려준다."""
+def create_task(server: RunningServer, shots: int = 50, client_token: str | None = None) -> str:
+    """Bell 회로 작업을 만들고 ARN을 돌려준다. client_token이 없으면 매번 새 토큰을 쓴다."""
+    import uuid
+
     body = {
-        "clientToken": "token",
+        "clientToken": client_token or uuid.uuid4().hex,
         "deviceArn": SV1_ARN,
         "shots": shots,
         "outputS3Bucket": "amazon-braket-localqpu",
@@ -203,3 +205,46 @@ def test_device_without_braket_extra_explains_install(
     finally:
         sv1_capabilities_json.cache_clear()
     assert status == 501 and "localqpu[braket]" in error["message"]
+
+
+def test_queue_info_reports_position_while_queued() -> None:
+    """대기 중인 작업은 대기열 순서를, 끝난 작업은 "None"을 queueInfo로 알려 준다(SDK queue_position용)."""
+    running = launch({"queue": {"polls_before_running": 1000}})
+    try:
+        first, second = create_task(running), create_task(running)
+        _, second_task = send_direct("GET", f"{running.url}/quantum-task/{quote(second, safe='')}")
+        assert (
+            second_task["queueInfo"]["position"] == "2"
+            and second_task["queueInfo"]["queuePriority"] == "Normal"
+        )
+        send_direct("PUT", f"{running.url}/quantum-task/{quote(first, safe='')}/cancel")
+        _, first_task = send_direct("GET", f"{running.url}/quantum-task/{quote(first, safe='')}")
+        assert (
+            first_task["queueInfo"]["position"] == "None"
+            and "CANCELLED" in first_task["queueInfo"]["message"]
+        )
+    finally:
+        running.stop()
+
+
+def test_client_token_is_idempotent(server: RunningServer) -> None:
+    """같은 clientToken으로 다시 만들면 같은 작업을 돌려주고, 다른 토큰은 새 작업이다."""
+    first = create_task(server, client_token="retry-me")
+    assert create_task(server, client_token="retry-me") == first
+    assert create_task(server, client_token="another") != first
+
+
+def test_sv1_can_be_set_offline_by_scenario() -> None:
+    """시나리오로 sv1을 오프라인으로 두면 서버가 받아들이고, 장치 상태와 작업 대기에 반영된다."""
+    running = launch({"backends": {"sv1": {"status": "offline"}}})
+    try:
+        _, device = send_direct("GET", f"{running.url}/device/{quote(SV1_ARN, safe='')}")
+        assert device["deviceStatus"] == "OFFLINE"
+        arn = create_task(running)
+        statuses = [
+            send_direct("GET", f"{running.url}/quantum-task/{quote(arn, safe='')}")[1]["status"]
+            for _ in range(3)
+        ]
+        assert statuses == ["QUEUED"] * 3
+    finally:
+        running.stop()
