@@ -7,6 +7,7 @@ from localqpu.aws.routes import register_aws_routes
 from localqpu.context import AppContext, ServerConfig
 from localqpu.control import register_control_routes
 from localqpu.ibm.backends import BackendCatalog
+from localqpu.ibm.job_routes import register_job_routes
 from localqpu.ibm.routes import register_ibm_routes
 from localqpu.ibm.session_routes import register_session_routes
 from localqpu.jobs import JobManager
@@ -47,6 +48,7 @@ def build_router(context: AppContext) -> Router:
     """모든 라우트를 등록한 라우터."""
     router = Router()
     register_ibm_routes(router, context)
+    register_job_routes(router, context)
     register_session_routes(router, context)
     register_control_routes(router, context)
     register_aws_routes(router, context)

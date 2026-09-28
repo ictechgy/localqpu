@@ -78,6 +78,7 @@ class JobRecord:
     session_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     ended_at: str | None = None
+    running_at: str | None = None
     future: Future[ProgramOutput] | None = field(default=None, repr=False, compare=False)
 
     @property
@@ -181,6 +182,25 @@ class JobManager:
             self._cancel_locked(job)
             return "cancelled"
 
+    def update_metadata(self, job_id: str, key: str, value: Any) -> bool:
+        """작업 메타데이터 항목 하나를 바꾼다(예: 태그 갱신). 없는 작업이면 False."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return False
+            job.metadata[key] = value
+            return True
+
+    def delete(self, job_id: str) -> bool:
+        """작업 기록을 지운다. 실행 중이면 결과를 버린다. 없는 작업이면 False."""
+        with self._lock:
+            job = self._jobs.pop(job_id, None)
+            if job is None:
+                return False
+            if job.future is not None:
+                job.future.cancel()
+            return True
+
     def cancel_session_jobs(self, session_id: str) -> int:
         """세션의 끝나지 않은 작업을 모두 취소하고 취소한 개수를 돌려준다(세션 취소용)."""
         with self._lock:
@@ -267,7 +287,7 @@ class JobManager:
             job.status, job.reason, job.reason_code = "Cancelled", reason, job.planned.reason_code
             job.ended_at = utc_now_iso()
             return
-        job.status = "Running"
+        job.status, job.running_at = "Running", utc_now_iso()
         job.future = self._pool.submit(self._runner_lookup(job.program_id), params, job.settings)
 
     def _finish(self, job: JobRecord) -> None:

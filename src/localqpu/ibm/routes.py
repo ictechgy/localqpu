@@ -172,6 +172,10 @@ def submit_job(context: AppContext, request: Request, params: dict[str, str]) ->
             payload["backend"],
             payload.get("params") or {},
             session_id=payload.get("session_id"),
+            metadata={
+                "tags": list(payload.get("tags") or []),
+                "private": bool(payload.get("private", False)),
+            },
         )
     except UnsupportedProgramError as error:
         return error_response(404, str(error))
@@ -200,6 +204,11 @@ def _reject_malformed_submission(payload: dict[str, Any]) -> Response | None:
                 400,
                 f"제출 본문의 '{field_name}'은(는) 문자열이어야 합니다(받은 값: {payload.get(field_name)!r}).",
             )
+    tags = payload.get("tags")
+    if tags is not None and (
+        not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags)
+    ):
+        return error_response(400, "제출 본문의 'tags'는 문자열 배열이어야 합니다.")
     if payload.get("session_id") is not None and not isinstance(payload["session_id"], str):
         return error_response(400, "제출 본문의 'session_id'는 문자열이어야 합니다.")
     if not isinstance(payload.get("params", {}), dict):
@@ -244,7 +253,7 @@ def get_job(context: AppContext, request: Request, params: dict[str, str]) -> Re
     """작업 상태 조회. 조회할 때마다 작업이 한 단계씩 진행된다."""
     job = context.jobs.poll(params["job_id"])
     if job is None:
-        raise NotFoundError(_unknown_job_message(params["job_id"]))
+        raise NotFoundError(unknown_job_message(params["job_id"]))
     return Response(200, job_to_api(job))
 
 
@@ -257,7 +266,7 @@ def get_job_results(context: AppContext, request: Request, params: dict[str, str
     """
     job = context.jobs.get(params["job_id"])
     if job is None:
-        raise NotFoundError(_unknown_job_message(params["job_id"]))
+        raise NotFoundError(unknown_job_message(params["job_id"]))
     if job.status in ("Failed", "Cancelled"):
         return Response(
             200,
@@ -273,7 +282,7 @@ def cancel_job(context: AppContext, request: Request, params: dict[str, str]) ->
     """작업 취소. 이미 끝난 작업은 409(클라이언트는 RuntimeInvalidStateError)."""
     outcome = context.jobs.cancel(params["job_id"])
     if outcome == "not_found":
-        raise NotFoundError(_unknown_job_message(params["job_id"]))
+        raise NotFoundError(unknown_job_message(params["job_id"]))
     if outcome == "already_final":
         return error_response(409, f"작업 '{params['job_id']}'는 이미 끝나서 취소할 수 없습니다.")
     return Response(204)
@@ -291,6 +300,8 @@ def job_to_api(job: JobRecord) -> dict[str, Any]:
         "created": job.created,
         "usage": {"quantum_seconds": 0},
         "session_id": job.session_id,
+        "tags": list(job.metadata.get("tags", [])),
+        "private": bool(job.metadata.get("private", False)),
     }
 
 
@@ -311,6 +322,6 @@ def _require_object(body: Any) -> dict[str, Any]:
     return body
 
 
-def _unknown_job_message(job_id: str) -> str:
+def unknown_job_message(job_id: str) -> str:
     """모르는 작업 ID 안내. 재시작으로 기록이 사라졌을 가능성을 알려 준다."""
     return f"localqpu에 '{job_id}' 작업이 없습니다. localqpu는 작업을 메모리에만 보관하므로 서버를 재시작하면 이전 작업은 사라집니다."
