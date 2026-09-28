@@ -334,3 +334,26 @@ def test_ended_at_is_set_for_every_final_status() -> None:
     assert manager.get(waiting.job_id).ended_at is None
     manager.cancel(waiting.job_id)
     assert failed.ended_at and completed.ended_at and manager.get(waiting.job_id).ended_at
+
+
+def test_running_at_is_recorded_when_execution_starts() -> None:
+    """실행을 시작하면 running_at이 기록된다(대기 중에는 없다)."""
+    gate = threading.Event()
+    manager = make_manager(runner=make_runner(gate=gate))
+    job = manager.submit("sampler", "ibm_brisbane", {})
+    assert manager.poll(job.job_id).running_at is None
+    assert manager.poll(job.job_id).running_at is not None
+    gate.set()
+
+
+def test_update_metadata_and_delete() -> None:
+    """메타데이터 항목을 바꿀 수 있고, 삭제한 작업은 사라진다. 없는 작업은 False."""
+    manager = make_manager()
+    job = manager.submit("sampler", "ibm_brisbane", {}, metadata={"tags": ["a"]})
+    assert manager.update_metadata(job.job_id, "tags", ["b"]) is True
+    assert manager.get(job.job_id).metadata["tags"] == ["b"]
+    assert manager.delete(job.job_id) is True and manager.get(job.job_id) is None
+    assert (
+        manager.delete(job.job_id) is False
+        and manager.update_metadata("missing", "tags", []) is False
+    )

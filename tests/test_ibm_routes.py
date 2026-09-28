@@ -352,3 +352,69 @@ def test_session_closed_between_check_and_submit_is_rejected() -> None:
         assert all(job.status == "Cancelled" for job in context.jobs.list_jobs())
     finally:
         context.jobs.shutdown()
+
+
+def submit_with(server: RunningServer, **extra: Any) -> str:
+    """추가 필드(tags, private 등)를 넣어 Bell 작업을 제출하고 ID를 돌려준다."""
+    status, body = send_direct("POST", f"{server.url}/api/v1/jobs", {**sampler_payload(), **extra})
+    assert status == 200
+    return str(body["id"])
+
+
+def test_tags_and_private_are_kept_and_updatable(server: RunningServer) -> None:
+    """제출한 tags·private가 작업 조회에 돌아오고, PUT tags(204)로 바꿀 수 있다."""
+    job_id = submit_with(server, tags=["exp-1"], private=True)
+    _, job = send_direct("GET", f"{server.url}/api/v1/jobs/{job_id}")
+    assert job["tags"] == ["exp-1"] and job["private"] is True
+    assert (
+        send_direct("PUT", f"{server.url}/api/v1/jobs/{job_id}/tags", {"tags": ["exp-2", "rerun"]})[
+            0
+        ]
+        == 204
+    )
+    assert send_direct("GET", f"{server.url}/api/v1/jobs/{job_id}")[1]["tags"] == ["exp-2", "rerun"]
+    assert send_direct("PUT", f"{server.url}/api/v1/jobs/missing/tags", {"tags": []})[0] == 404
+
+
+def test_job_listing_filters_paginates_and_counts(server: RunningServer) -> None:
+    """목록은 필터 뒤 전체 개수를 count로 주고, offset·limit으로 나누며, 기본은 최신순이다."""
+    ids = [submit_with(server, tags=["batch-a"]) for _ in range(3)] + [
+        submit_with(server, tags=["batch-b"])
+    ]
+    _, page = send_direct(
+        "GET", f"{server.url}/api/v1/jobs?limit=2&offset=0&tags=batch-a&exclude_params=true"
+    )
+    assert page["count"] == 3 and [job["id"] for job in page["jobs"]] == [ids[2], ids[1]]
+    _, rest = send_direct("GET", f"{server.url}/api/v1/jobs?limit=2&offset=2&tags=batch-a")
+    assert [job["id"] for job in rest["jobs"]] == [ids[0]]
+    _, ascending = send_direct("GET", f"{server.url}/api/v1/jobs?sort=ASC&backend=ibm_brisbane")
+    assert [job["id"] for job in ascending["jobs"]] == ids
+    _, pending = send_direct("GET", f"{server.url}/api/v1/jobs?pending=false")
+    assert pending["count"] == 0
+
+
+def test_metrics_and_logs(server: RunningServer) -> None:
+    """metrics는 대기 중 usage pending, 끝나면 final과 실행 시각을 주고, logs는 평문 기록을 준다."""
+    job_id = submit_with(server)
+    _, waiting = send_direct("GET", f"{server.url}/api/v1/jobs/{job_id}/metrics")
+    assert waiting["usage"]["status"] == "pending" and waiting["timestamps"]["created"]
+    poll_job(server, job_id)
+    _, finished = send_direct("GET", f"{server.url}/api/v1/jobs/{job_id}/metrics")
+    assert finished["usage"] == {
+        "status": "final",
+        "quantum_seconds": 0,
+        "seconds": 0,
+        "qpu_charge_time_seconds": 0,
+    }
+    assert finished["timestamps"]["running"] and finished["timestamps"]["finished"]
+    status, logs = send_direct("GET", f"{server.url}/api/v1/jobs/{job_id}/logs")
+    assert status == 200 and "Completed" in logs and job_id in logs
+
+
+def test_delete_job(server: RunningServer) -> None:
+    """삭제하면 204이고 이후 조회·목록에서 사라지며, 다시 지우면 404다."""
+    job_id = submit_with(server)
+    assert send_direct("DELETE", f"{server.url}/api/v1/jobs/{job_id}")[0] == 204
+    assert send_direct("GET", f"{server.url}/api/v1/jobs/{job_id}")[0] == 404
+    assert send_direct("GET", f"{server.url}/api/v1/jobs")[1]["count"] == 0
+    assert send_direct("DELETE", f"{server.url}/api/v1/jobs/{job_id}")[0] == 404
