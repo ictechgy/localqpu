@@ -43,6 +43,10 @@ class LocalqpuControl:
         """제출된 작업 요약 목록."""
         return list(self._call("GET", "/_localqpu/jobs")["jobs"])
 
+    def requests(self) -> list[dict[str, Any]]:
+        """최근 요청 기록(method, host, path, status, fault, duration_ms, time)."""
+        return list(self._call("GET", "/_localqpu/requests")["requests"])
+
     def _call(self, method: str, path: str, payload: Any = None, expected_status: int = 200) -> Any:
         """요청을 보내고 상태 코드를 확인한다."""
         status, body = send_direct(method, f"{self._base_url}{path}", payload)

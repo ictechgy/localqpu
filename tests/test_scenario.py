@@ -177,3 +177,60 @@ def test_noise_flag_parses_and_round_trips() -> None:
     assert scenario.noise is True and parse_scenario(scenario_to_json(scenario)) == scenario
     with pytest.raises(ScenarioError, match="noise"):
         parse_scenario({"noise": "yes"})
+
+
+def test_http_faults_parse_and_are_consumed_in_order() -> None:
+    """http_faults는 목록 순서대로 처음 맞는 규칙이 times만큼 소비되고, reset으로 되돌아간다."""
+    state = ScenarioState(
+        parse_scenario(
+            {
+                "http_faults": [
+                    {
+                        "method": "POST",
+                        "path": "/api/v1/jobs",
+                        "status": 503,
+                        "times": 2,
+                        "retry_after": 1,
+                    },
+                    {"path": "/api/v1/jobs/*/results", "drop_connection": True},
+                ]
+            }
+        )
+    )
+    assert state.consume_http_fault("GET", "/api/v1/jobs") is None
+    first = state.consume_http_fault("POST", "/api/v1/jobs")
+    assert first is not None and (first.status, first.retry_after, first.phase) == (
+        503,
+        1,
+        "before",
+    )
+    assert state.consume_http_fault("POST", "/api/v1/jobs") is not None
+    assert state.consume_http_fault("POST", "/api/v1/jobs") is None
+    assert state.current().http_faults[0].times == 0
+    dropped = state.consume_http_fault("GET", "/api/v1/jobs/abc/results")
+    assert dropped is not None and dropped.drop_connection is True
+    state.reset()
+    assert state.current().http_faults[0].times == 2
+
+
+@pytest.mark.parametrize(
+    ("fault", "location"),
+    [
+        ({"status": 503}, "path"),
+        ({"path": "/x", "status": 99}, "status"),
+        ({"path": "/x", "status": 503, "times": 0}, "times"),
+        ({"path": "/x", "status": 503, "phase": "during"}, "phase"),
+        ({"path": "/x"}, "효과"),
+        ({"path": "/x", "status": 503, "colour": "red"}, "colour"),
+    ],
+)
+def test_invalid_http_faults_are_rejected(fault: dict[str, object], location: str) -> None:
+    """형식이 틀리거나 아무 효과가 없는 규칙은 위치와 함께 거절된다."""
+    with pytest.raises(ScenarioError, match=location):
+        parse_scenario({"http_faults": [fault]})
+
+
+def test_http_faults_round_trip_through_json() -> None:
+    """http_faults도 JSON 왕복에서 유지된다."""
+    scenario = parse_scenario({"http_faults": [{"path": "/api/*", "delay_seconds": 0.5}]})
+    assert parse_scenario(scenario_to_json(scenario)) == scenario

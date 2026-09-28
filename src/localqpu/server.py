@@ -10,6 +10,8 @@ import json
 import logging
 import re
 import threading
+import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -131,13 +133,60 @@ def _call_handler(handler: Handler, request: Request, params: dict[str, str]) ->
         )
 
 
+#: 제어 API 경로 접두사. 장애 주입과 요청 기록에서 빠진다.
+CONTROL_PATH_PREFIX = "/_localqpu/"
+
+#: 요청 기록에 남기는 최대 항목 수. 오래된 항목부터 버린다.
+REQUEST_JOURNAL_LIMIT = 1000
+
+
+@dataclass(frozen=True)
+class FaultDecision:
+    """요청 하나에 적용할 HTTP 장애(v0.3 설계서 1절). 서버 계층은 시나리오를 모르고 이 결정만 따른다."""
+
+    status: int | None = None
+    retry_after: int | None = None
+    message: str | None = None
+    drop_connection: bool = False
+    delay_seconds: float = 0.0
+    phase: str = "before"
+
+    @property
+    def is_failure(self) -> bool:
+        """응답을 실패로 바꾸는지(지연만 있는 장애는 아니다)."""
+        return self.drop_connection or self.status is not None
+
+    def describe(self) -> str:
+        """요청 기록에 남길 짧은 설명."""
+        if self.drop_connection:
+            return "drop_connection"
+        if self.status is not None:
+            return f"status {self.status} ({self.phase})"
+        return f"delay {self.delay_seconds}s"
+
+
+#: 요청마다 장애를 정하는 함수. None이면 장애 없음.
+FaultPolicy = Callable[[Request], FaultDecision | None]
+
+
 class ServerStats:
-    """서버 통계. 지금은 막은 CONNECT 요청 수만 센다."""
+    """서버 통계: 막은 CONNECT 요청 수와 최근 요청 기록(본문·헤더·쿼리는 남기지 않는다)."""
 
     def __init__(self) -> None:
         """0에서 시작한다."""
         self._lock = threading.Lock()
         self._blocked_connect_requests = 0
+        self._journal: deque[dict[str, Any]] = deque(maxlen=REQUEST_JOURNAL_LIMIT)
+
+    def record_request(self, entry: dict[str, Any]) -> None:
+        """요청 하나를 기록한다."""
+        with self._lock:
+            self._journal.append(entry)
+
+    def requests(self) -> list[dict[str, Any]]:
+        """오래된 순서의 요청 기록 사본."""
+        with self._lock:
+            return [dict(entry) for entry in self._journal]
 
     def record_blocked_connect(self) -> None:
         """막은 CONNECT 하나를 센다."""
@@ -151,9 +200,10 @@ class ServerStats:
             return self._blocked_connect_requests
 
     def reset(self) -> None:
-        """집계를 0으로 되돌린다."""
+        """집계와 요청 기록을 비운다."""
         with self._lock:
             self._blocked_connect_requests = 0
+            self._journal.clear()
 
 
 def _no_operation() -> None:
@@ -197,10 +247,16 @@ class RunningServer:
 
 
 def serve(
-    router: Router, stats: ServerStats, host: str, port: int, is_verbose: bool = False
+    router: Router,
+    stats: ServerStats,
+    host: str,
+    port: int,
+    is_verbose: bool = False,
+    fault_policy: FaultPolicy | None = None,
 ) -> RunningServer:
-    """라우터를 HTTP 서버로 띄운다. port=0이면 빈 포트를 쓴다."""
-    http_server = ThreadingHTTPServer((host, port), _make_handler_class(router, stats, is_verbose))
+    """라우터를 HTTP 서버로 띄운다. port=0이면 빈 포트를 쓴다. fault_policy로 HTTP 장애를 주입한다."""
+    handler_class = _make_handler_class(router, stats, is_verbose, fault_policy)
+    http_server = ThreadingHTTPServer((host, port), handler_class)
     http_server.daemon_threads = True
     thread = threading.Thread(target=http_server.serve_forever, name="localqpu-http", daemon=True)
     thread.start()
@@ -208,7 +264,7 @@ def serve(
 
 
 def _make_handler_class(
-    router: Router, stats: ServerStats, is_verbose: bool
+    router: Router, stats: ServerStats, is_verbose: bool, fault_policy: FaultPolicy | None
 ) -> type[BaseHTTPRequestHandler]:
     """라우터를 쓰는 요청 핸들러 클래스를 만든다."""
 
@@ -223,9 +279,15 @@ def _make_handler_class(
                 _write_response(self, error_response(400, str(error)))
                 logger.info("400 %s %s (잘못된 요청 헤더: %s)", self.command, self.path, error)
                 return
-            response = router.dispatch(request)
-            _write_response(self, response)
-            _log_request(request, response, is_verbose)
+            started = time.monotonic()
+            fault = _decide_fault(fault_policy, request)
+            if fault is not None and fault.delay_seconds > 0:
+                time.sleep(fault.delay_seconds)
+            response = None if _fails_before(fault) else router.dispatch(request)
+            status = _send_outcome(self, fault, response)
+            _journal(stats, request, status, fault, started)
+            if response is not None:
+                _log_request(request, response, is_verbose)
 
         do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _handle
 
@@ -241,6 +303,60 @@ def _make_handler_class(
             """표준 라이브러리의 stderr 로그를 끈다. 로그는 _log_request가 logging으로 남긴다."""
 
     return LocalqpuRequestHandler
+
+
+def _decide_fault(fault_policy: FaultPolicy | None, request: Request) -> FaultDecision | None:
+    """제어 API가 아니면 장애 정책에 물어본다."""
+    if fault_policy is None or request.path.startswith(CONTROL_PATH_PREFIX):
+        return None
+    return fault_policy(request)
+
+
+def _fails_before(fault: FaultDecision | None) -> bool:
+    """처리하기 전에 실패시키는 장애인지."""
+    return fault is not None and fault.is_failure and fault.phase == "before"
+
+
+def _send_outcome(
+    handler: BaseHTTPRequestHandler, fault: FaultDecision | None, response: Response | None
+) -> int | None:
+    """장애 또는 정상 응답을 보내고 보낸 상태 코드를 돌려준다. 연결을 끊었으면 None."""
+    if fault is not None and fault.drop_connection:
+        handler.close_connection = True
+        return None
+    if fault is not None and fault.status is not None:
+        message = (
+            fault.message or f"localqpu: 시나리오 http_faults가 주입한 {fault.status} 응답입니다."
+        )
+        headers = {"Retry-After": str(fault.retry_after)} if fault.retry_after is not None else {}
+        _write_response(handler, error_response(fault.status, message), headers)
+        return fault.status
+    assert response is not None
+    _write_response(handler, response)
+    return response.status
+
+
+def _journal(
+    stats: ServerStats,
+    request: Request,
+    status: int | None,
+    fault: FaultDecision | None,
+    started: float,
+) -> None:
+    """제어 API가 아닌 요청을 기록한다. 본문·헤더·쿼리는 자격 증명이 있을 수 있어 남기지 않는다."""
+    if request.path.startswith(CONTROL_PATH_PREFIX):
+        return
+    stats.record_request(
+        {
+            "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "method": request.method,
+            "host": request.host,
+            "path": request.path,
+            "status": status,
+            "fault": None if fault is None else fault.describe(),
+            "duration_ms": round((time.monotonic() - started) * 1000, 1),
+        }
+    )
 
 
 def _parse_request(handler: BaseHTTPRequestHandler) -> Request:
@@ -273,11 +389,15 @@ def _read_body(handler: BaseHTTPRequestHandler) -> bytes:
     return handler.rfile.read(size) if size else b""
 
 
-def _write_response(handler: BaseHTTPRequestHandler, response: Response) -> None:
-    """응답을 Content-Type·Content-Length 헤더와 함께 쓴다."""
+def _write_response(
+    handler: BaseHTTPRequestHandler, response: Response, extra_headers: dict[str, str] | None = None
+) -> None:
+    """응답을 Content-Type·Content-Length(와 추가 헤더)와 함께 쓴다."""
     payload = response.encode()
     handler.send_response(response.status)
     handler.send_header("Content-Type", response.content_type)
+    for name, value in (extra_headers or {}).items():
+        handler.send_header(name, value)
     handler.send_header("Content-Length", str(len(payload)))
     handler.end_headers()
     handler.wfile.write(payload)

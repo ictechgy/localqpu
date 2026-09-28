@@ -9,6 +9,7 @@ import pytest
 from localqpu.http_util import send_direct
 from localqpu.server import (
     BadRequestError,
+    FaultDecision,
     NotFoundError,
     Request,
     Response,
@@ -178,3 +179,113 @@ def test_greedy_path_parameter_matches_slashes() -> None:
     assert response.status == 200
     assert response.body == {"suffix": "localqpu", "key": "tasks/abc/results.json"}
     assert router.dispatch(Request("GET", "/amazon-braket-localqpu", {}, b"")).status == 501
+
+
+class CountingHandler:
+    """호출 횟수를 세는 핸들러(장애가 처리 전·후 어디서 적용됐는지 확인용)."""
+
+    def __init__(self) -> None:
+        """0에서 시작한다."""
+        self.calls = 0
+
+    def __call__(self, request: Request, params: dict[str, str]) -> Response:
+        """호출을 세고 200을 돌려준다."""
+        self.calls += 1
+        return Response(200, {"ok": True})
+
+
+def serve_with_fault(
+    decision: FaultDecision | None, handler: CountingHandler
+) -> tuple[RunningServer, ServerStats]:
+    """모든 /work 요청에 같은 장애 결정을 적용하는 서버. 제어 경로는 장애 정책이 판단한다."""
+    router = Router()
+    router.add("POST", "/work", handler)
+    router.add("GET", "/_localqpu/health", lambda request, params: Response(200, {"status": "ok"}))
+    stats = ServerStats()
+
+    def policy(request: Request) -> FaultDecision | None:
+        """/work에만 장애를 적용한다."""
+        return decision if request.path == "/work" else None
+
+    return serve(router, stats, "127.0.0.1", 0, fault_policy=policy), stats
+
+
+def test_fault_before_skips_handler_and_sets_retry_after() -> None:
+    """before 장애는 처리하지 않고 상태 코드와 Retry-After를 돌려주며 요청 기록에 남는다."""
+    handler = CountingHandler()
+    server, stats = serve_with_fault(
+        FaultDecision(status=503, retry_after=2, message="busy"), handler
+    )
+    try:
+        connection = http.client.HTTPConnection(server.host, server.port, timeout=5)
+        connection.request("POST", "/work", body=b"{}")
+        response = connection.getresponse()
+        assert (response.status, response.getheader("Retry-After")) == (
+            503,
+            "2",
+        ) and b"busy" in response.read()
+        assert handler.calls == 0
+        entry = stats.requests()[-1]
+        assert (entry["method"], entry["path"], entry["status"]) == (
+            "POST",
+            "/work",
+            503,
+        ) and "503" in entry["fault"]
+    finally:
+        server.stop()
+
+
+def test_fault_after_runs_handler_then_loses_response() -> None:
+    """after 장애는 정상 처리한 뒤 응답만 실패시킨다(유실된 응답 재현)."""
+    handler = CountingHandler()
+    server, _ = serve_with_fault(FaultDecision(status=502, phase="after"), handler)
+    try:
+        status, _ = send_direct("POST", f"{server.url}/work", {})
+        assert status == 502 and handler.calls == 1
+    finally:
+        server.stop()
+
+
+def test_drop_connection_closes_without_response() -> None:
+    """drop_connection이면 응답 없이 연결이 끊긴다."""
+    handler = CountingHandler()
+    server, stats = serve_with_fault(FaultDecision(drop_connection=True), handler)
+    try:
+        connection = http.client.HTTPConnection(server.host, server.port, timeout=5)
+        connection.request("POST", "/work", body=b"{}")
+        with pytest.raises((http.client.RemoteDisconnected, ConnectionResetError)):
+            connection.getresponse()
+        assert (
+            stats.requests()[-1]["status"] is None
+            and stats.requests()[-1]["fault"] == "drop_connection"
+        )
+    finally:
+        server.stop()
+
+
+def test_delay_only_fault_slows_normal_response() -> None:
+    """delay만 있으면 기다린 뒤 정상 응답한다."""
+    import time
+
+    handler = CountingHandler()
+    server, _ = serve_with_fault(FaultDecision(delay_seconds=0.3), handler)
+    try:
+        started = time.monotonic()
+        status, _ = send_direct("POST", f"{server.url}/work", {})
+        assert status == 200 and time.monotonic() - started >= 0.3 and handler.calls == 1
+    finally:
+        server.stop()
+
+
+def test_request_journal_skips_control_paths_and_resets() -> None:
+    """요청 기록은 제어 API 요청을 남기지 않고, reset으로 비워진다."""
+    handler = CountingHandler()
+    server, stats = serve_with_fault(None, handler)
+    try:
+        send_direct("POST", f"{server.url}/work", {})
+        send_direct("GET", f"{server.url}/_localqpu/health")
+        assert [entry["path"] for entry in stats.requests()] == ["/work"]
+        stats.reset()
+        assert stats.requests() == []
+    finally:
+        server.stop()
